@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import type { Article } from '@/lib/types';
 
 interface ArticleModalProps {
@@ -13,8 +13,7 @@ interface ArticleModalProps {
  * shows the article in a modal, and pushes /article/[slug] to history.
  *
  * The modal renders from the pre-injected articlesJSON (no client fetch needed).
- * The detailed MDX body is loaded from /article/[slug] via an iframe-like approach,
- * but to keep things SSR-friendly we navigate to the article page when the URL changes.
+ * The detailed MDX body is loaded from /article/[slug] via fetch.
  */
 export default function ArticleModal({ articlesJSON }: ArticleModalProps) {
   const overlayRef  = useRef<HTMLDivElement>(null);
@@ -29,7 +28,12 @@ export default function ArticleModal({ articlesJSON }: ArticleModalProps) {
   const categoryRef = useRef<HTMLElement>(null);
   const currentSlugRef = useRef<string | null>(null);
 
-  // Index articles by slug
+  // Prev / next info — use state so React properly controls disabled / title
+  type NavInfo = { slug: string; title: string } | null;
+  const [prevInfo, setPrevInfo] = useState<NavInfo>(null);
+  const [nextInfo, setNextInfo] = useState<NavInfo>(null);
+
+  // Index articles by slug (built once on mount)
   const articleMap = useRef<Record<string, Article>>({});
   useEffect(() => {
     articlesJSON.forEach(a => { articleMap.current[a.slug] = a; });
@@ -41,7 +45,15 @@ export default function ArticleModal({ articlesJSON }: ArticleModalProps) {
 
     currentSlugRef.current = slug;
 
-    // Fill header fields
+    // ── Prev / next navigation ────────────────────────────────────
+    const idx     = articlesJSON.findIndex(a => a.slug === slug);
+    const prevArt = idx > 0                       ? articlesJSON[idx - 1] : null;
+    const nextArt = idx < articlesJSON.length - 1 ? articlesJSON[idx + 1] : null;
+    // Use setState so React properly enables/disables the buttons
+    setPrevInfo(prevArt ? { slug: prevArt.slug, title: prevArt.title } : null);
+    setNextInfo(nextArt ? { slug: nextArt.slug, title: nextArt.title } : null);
+
+    // ── Fill header fields (DOM refs — no re-render cost) ─────────
     if (headlineRef.current) headlineRef.current.textContent = article.title;
     if (kickerRef.current)   kickerRef.current.textContent  = article.kicker;
     if (dateRef.current)     dateRef.current.textContent    = formatDate(article.date);
@@ -51,7 +63,7 @@ export default function ArticleModal({ articlesJSON }: ArticleModalProps) {
 
     // Deck
     if (deckRef.current) {
-      deckRef.current.textContent  = article.deck ?? '';
+      deckRef.current.textContent   = article.deck ?? '';
       deckRef.current.style.display = article.deck ? 'block' : 'none';
     }
 
@@ -71,7 +83,6 @@ export default function ArticleModal({ articlesJSON }: ArticleModalProps) {
       try {
         const res  = await fetch(`/article/${slug}?modal=1`);
         const html = await res.text();
-        // Parse and extract only the article body
         const parser = new DOMParser();
         const doc    = parser.parseFromString(html, 'text/html');
         const body   = doc.querySelector('.article-page-body');
@@ -85,23 +96,25 @@ export default function ArticleModal({ articlesJSON }: ArticleModalProps) {
       }
     }
 
-    // Open
+    // Open overlay
     overlayRef.current.classList.add('open');
     document.body.style.overflow = 'hidden';
     history.pushState({ article: slug }, '', `/article/${slug}`);
-  }, []);
+  }, [articlesJSON]);
 
   const closeModal = useCallback(() => {
     if (!overlayRef.current?.classList.contains('open')) return;
     overlayRef.current.classList.remove('open');
     document.body.style.overflow = '';
     currentSlugRef.current = null;
+    setPrevInfo(null);
+    setNextInfo(null);
     if (window.location.pathname.startsWith('/article/')) {
       history.pushState({}, '', '/');
     }
   }, []);
 
-  // ── Event delegation for article clicks ──────────────────────────
+  // ── Event delegation for article & nav clicks ─────────────────────
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
@@ -163,6 +176,7 @@ export default function ArticleModal({ articlesJSON }: ArticleModalProps) {
     <div ref={overlayRef} className="modal-overlay" id="modalOverlay" role="presentation"
       onClick={e => { if (e.target === overlayRef.current) closeModal(); }}>
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-headline-id">
+
         {/* Top bar */}
         <div className="modal-topbar">
           <div ref={kickerRef} className="mt-left" id="modalKicker">SECTION</div>
@@ -170,6 +184,35 @@ export default function ArticleModal({ articlesJSON }: ArticleModalProps) {
             <div ref={dateRef} className="mt-date" id="modalDate" />
             <button className="modal-close" data-close-modal aria-label="Close article">×</button>
           </div>
+        </div>
+
+        {/* Article prev / next navigation strip — state-driven so disabled works */}
+        <div className="modal-article-nav" role="navigation" aria-label="Article navigation">
+          <button
+            className="modal-nav-btn prev"
+            aria-label={prevInfo ? `Previous: ${prevInfo.title}` : 'No previous article'}
+            disabled={!prevInfo}
+            onClick={() => prevInfo && openModal(prevInfo.slug)}
+          >
+            <span className="nav-arrow" aria-hidden="true">←</span>
+            <span className="nav-text">
+              <span className="nav-label">Previous</span>
+              <span className="nav-title">{prevInfo?.title ?? ''}</span>
+            </span>
+          </button>
+
+          <button
+            className="modal-nav-btn next"
+            aria-label={nextInfo ? `Next: ${nextInfo.title}` : 'No next article'}
+            disabled={!nextInfo}
+            onClick={() => nextInfo && openModal(nextInfo.slug)}
+          >
+            <span className="nav-text">
+              <span className="nav-label">Next</span>
+              <span className="nav-title">{nextInfo?.title ?? ''}</span>
+            </span>
+            <span className="nav-arrow" aria-hidden="true">→</span>
+          </button>
         </div>
 
         {/* Headline block */}
