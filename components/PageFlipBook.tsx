@@ -382,103 +382,268 @@ function DesktopBook({ pages }: { pages: ReactNode[] }) {
   );
 }
 
-// ─── MobileBook (single page, swipe) ─────────────────────────────────────────
+// ─── MobileBook (single page, drag-to-turn) ──────────────────────────────────
+// Same CSS 3D rotateY trick as DesktopBook, but single-page.
+// Touch swipe tracks the finger directly, then completes or reverts.
 function MobileBook({ pages }: { pages: ReactNode[] }) {
   const [cur, setCur]         = useState(0);
-  const [animating, setAnim]  = useState(false);
-  const slotRef  = useRef<HTMLDivElement>(null);
-  const touchX   = useRef<number | null>(null);
-  const dims     = useBookDims(true);
-  const total    = pages.length;
+  const [leafDir, setLeafDir] = useState<FlipDir | null>(null);
 
-  const slideTo = useCallback((nextIdx: number, dir: 'left' | 'right') => {
-    if (animating || nextIdx < 0 || nextIdx >= total) return;
-    const slot = slotRef.current;
-    if (!slot) return;
-    setAnim(true);
-    slot.style.transition = 'transform .24s ease, opacity .24s ease';
-    slot.style.transform  = dir === 'left' ? 'translateX(-22px)' : 'translateX(22px)';
-    slot.style.opacity    = '0';
-    setTimeout(() => {
-      setCur(nextIdx);
-      slot.style.transition = 'none';
-      slot.style.transform  = dir === 'left' ? 'translateX(22px)' : 'translateX(-22px)';
-      slot.style.opacity    = '0';
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        slot.style.transition = 'transform .24s ease, opacity .24s ease';
-        slot.style.transform  = 'translateX(0)';
-        slot.style.opacity    = '1';
-        setAnim(false);
-      }));
-    }, 250);
-  }, [animating, total]);
+  const leafRef       = useRef<HTMLDivElement>(null);
+  const containerRef  = useRef<HTMLDivElement>(null);
+  const isAnimating   = useRef(false);
+  const pendingFlip   = useRef<FlipDir | null>(null);
+  // keep a mutable ref so touch-closure doesn't capture stale `cur`
+  const curRef        = useRef(cur);
+  const total         = pages.length;
+  const dims          = useBookDims(true);
 
-  const goNext = useCallback(() => slideTo(cur + 1, 'left'),  [cur, slideTo]);
-  const goPrev = useCallback(() => slideTo(cur - 1, 'right'), [cur, slideTo]);
+  // Keep curRef in sync
+  useEffect(() => { curRef.current = cur; }, [cur]);
 
-  // Touch swipe
+  // ── Flip / revert ───────────────────────────────────────────────
+  const finishFlip = useCallback((dir: FlipDir) => {
+    const leaf = leafRef.current;
+    if (!leaf) return;
+    const target = dir === 'next' ? -180 : 180;
+    leaf.style.transition = `transform ${FLIP_MS}ms cubic-bezier(.42,0,.38,1)`;
+    leaf.style.transform  = `rotateY(${target}deg)`;
+    const onEnd = () => {
+      leaf.removeEventListener('transitionend', onEnd);
+      setCur(c => dir === 'next' ? Math.min(c + 1, total - 1) : Math.max(c - 1, 0));
+      setLeafDir(null);
+      isAnimating.current = false;
+    };
+    leaf.addEventListener('transitionend', onEnd, { once: true });
+  }, [total]);
+
+  const revertFlip = useCallback((fromAngle: number) => {
+    const leaf = leafRef.current;
+    if (!leaf) return;
+    const ms = Math.max(180, Math.abs(fromAngle) / 180 * 380);
+    leaf.style.transition = `transform ${ms}ms cubic-bezier(.3,0,.2,1)`;
+    leaf.style.transform  = 'rotateY(0deg)';
+    const onEnd = () => {
+      leaf.removeEventListener('transitionend', onEnd);
+      setLeafDir(null);
+      isAnimating.current = false;
+    };
+    leaf.addEventListener('transitionend', onEnd, { once: true });
+  }, []);
+
+  // Fire pending programmatic flip after React renders the leaf
   useEffect(() => {
-    const onStart = (e: TouchEvent) => { touchX.current = e.touches[0].clientX; };
-    const onEnd   = (e: TouchEvent) => {
-      if (touchX.current === null) return;
-      const dx = e.changedTouches[0].clientX - touchX.current;
-      if (dx < -40) goNext();
-      else if (dx > 40) goPrev();
-      touchX.current = null;
+    if (!leafDir || !pendingFlip.current) return;
+    const dir = pendingFlip.current;
+    pendingFlip.current = null;
+    requestAnimationFrame(() => finishFlip(dir));
+  }, [leafDir, finishFlip]);
+
+  // ── Touch drag ─────────────────────────────────────────────────
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    let startX = 0, startY = 0;
+    let activeDir: FlipDir | null = null;
+    let currentAngle = 0;
+    let decided = false; // true once we know if it's a horizontal drag
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (isAnimating.current) return;
+      const t = e.touches[0];
+      startX = t.clientX;
+      startY = t.clientY;
+      activeDir = null;
+      currentAngle = 0;
+      decided = false;
     };
-    document.addEventListener('touchstart', onStart, { passive: true });
-    document.addEventListener('touchend',   onEnd,   { passive: true });
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (isAnimating.current) return;
+      const t = e.touches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+
+      // Wait until enough movement to decide axis
+      if (!decided) {
+        if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+        decided = true;
+        // More vertical than horizontal → vertical scroll, ignore
+        if (Math.abs(dy) > Math.abs(dx)) return;
+        // Horizontal — determine flip direction
+        const dir: FlipDir = dx < 0 ? 'next' : 'prev';
+        if (dir === 'next' && curRef.current >= total - 1) return;
+        if (dir === 'prev' && curRef.current <= 0) return;
+        activeDir = dir;
+        isAnimating.current = true;
+        setLeafDir(dir);
+      }
+
+      if (!activeDir) return;
+
+      // Prevent browser scroll while we're flipping
+      e.preventDefault();
+
+      if (!leafRef.current) return; // leaf not yet rendered
+      const w = el.clientWidth;
+      let angle: number;
+      if (activeDir === 'next') {
+        angle = -180 * Math.max(0, Math.min(1, -dx / w));
+      } else {
+        angle = 180 * Math.max(0, Math.min(1, dx / w));
+      }
+      currentAngle = angle;
+      leafRef.current.style.transition = 'none';
+      leafRef.current.style.transform  = `rotateY(${angle}deg)`;
+    };
+
+    const onTouchEnd = () => {
+      if (!activeDir) { isAnimating.current = false; return; }
+      const dir = activeDir;
+      const angle = currentAngle;
+      activeDir = null;
+      currentAngle = 0;
+      decided = false;
+
+      if (Math.abs(angle) / 180 > 0.25) {
+        finishFlip(dir);
+      } else {
+        revertFlip(angle);
+      }
+    };
+
+    // passive:false needed on touchmove to call preventDefault()
+    el.addEventListener('touchstart',  onTouchStart, { passive: true });
+    el.addEventListener('touchmove',   onTouchMove,  { passive: false });
+    el.addEventListener('touchend',    onTouchEnd,   { passive: true });
+    el.addEventListener('touchcancel', onTouchEnd,   { passive: true });
+
     return () => {
-      document.removeEventListener('touchstart', onStart);
-      document.removeEventListener('touchend',   onEnd);
+      el.removeEventListener('touchstart',  onTouchStart);
+      el.removeEventListener('touchmove',   onTouchMove);
+      el.removeEventListener('touchend',    onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
     };
-  }, [goNext, goPrev]);
+  }, [total, finishFlip, revertFlip]); // curRef keeps cur fresh without re-registering
 
   if (!dims) return null;
   const { pageW, pageH, scaleX, scaleY } = dims;
+  const pageProps = { pageW, pageH, scaleX, scaleY };
+
+  // Slot behind the leaf shows the destination page
+  const slotIdx  = leafDir === 'next' ? cur + 1 : leafDir === 'prev' ? cur - 1 : cur;
+  const backIdx  = leafDir === 'next' ? cur + 1 : cur - 1;
+  const inBounds = (i: number) => i >= 0 && i < total;
+
+  const leafOrigin = leafDir === 'next' ? 'left center' : 'right center';
 
   return (
-    <>
-      <div ref={slotRef} style={{ width: pageW, height: pageH }}>
-        <ScaledPage pageW={pageW} pageH={pageH} scaleX={scaleX} scaleY={scaleY}>
-          {pages[cur]}
-        </ScaledPage>
+    <div
+      ref={containerRef}
+      style={{
+        position:    'relative',
+        width:        pageW,
+        height:       pageH,
+        perspective: `${pageW * 1.8}px`,
+        userSelect:  'none',
+        // touchAction:none lets us call preventDefault in touchmove without passive issues
+        touchAction: 'none',
+      }}
+    >
+      {/* Background slot — destination page sits here, revealed as leaf turns */}
+      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
+        <ScaledPage {...pageProps}>{pages[slotIdx]}</ScaledPage>
       </div>
 
-      {/* Swipe hint arrows — bottom corners, not intrusive */}
-      {cur > 0 && (
-        <button
-          onClick={goPrev}
-          aria-label="Previous page"
+      {/* Flipping leaf (only during turn) */}
+      {leafDir && (
+        <div
+          ref={leafRef}
           style={{
-            position: 'fixed', bottom: 24, left: 20, zIndex: 60,
+            position:        'absolute',
+            inset:            0,
+            transformStyle:  'preserve-3d',
+            transformOrigin:  leafOrigin,
+            transform:       'rotateY(0deg)',
+            zIndex:           10,
+            pointerEvents:   'none',
+          }}
+        >
+          {/* Front face — the page being flipped away */}
+          <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', overflow: 'hidden' }}>
+            <div style={{
+              position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none',
+              background: leafDir === 'next'
+                ? 'linear-gradient(to left, rgba(0,0,0,.20) 0%, rgba(0,0,0,.06) 30%, transparent 55%)'
+                : 'linear-gradient(to right, rgba(0,0,0,.20) 0%, rgba(0,0,0,.06) 30%, transparent 55%)',
+            }} />
+            <ScaledPage {...pageProps}>{pages[cur]}</ScaledPage>
+          </div>
+
+          {/* Back face — destination page (seen mid-flip) */}
+          <div style={{
+            position: 'absolute', inset: 0,
+            backfaceVisibility: 'hidden',
+            transform: 'rotateY(180deg)',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none',
+              background: leafDir === 'next'
+                ? 'linear-gradient(to right, rgba(0,0,0,.20) 0%, rgba(0,0,0,.06) 30%, transparent 55%)'
+                : 'linear-gradient(to left, rgba(0,0,0,.20) 0%, rgba(0,0,0,.06) 30%, transparent 55%)',
+            }} />
+            {inBounds(backIdx) && <ScaledPage {...pageProps}>{pages[backIdx]}</ScaledPage>}
+          </div>
+        </div>
+      )}
+
+      {/* Corner hint arrows — shown when not animating */}
+      {!leafDir && cur > 0 && (
+        <button
+          aria-label="Previous page"
+          onClick={() => {
+            if (isAnimating.current || cur <= 0) return;
+            isAnimating.current = true;
+            pendingFlip.current = 'prev';
+            setLeafDir('prev');
+          }}
+          style={{
+            position: 'fixed', bottom: 24, left: 16, zIndex: 60,
             width: 36, height: 36, borderRadius: '50%',
             border: '1px solid rgba(0,0,0,.18)',
-            background: 'rgba(247,244,236,.9)',
-            fontSize: 16, cursor: 'pointer',
+            background: 'rgba(247,244,236,.92)',
+            fontSize: 18, cursor: 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 2px 10px rgba(0,0,0,.15)',
+            boxShadow: '0 2px 10px rgba(0,0,0,.18)',
           }}
         >‹</button>
       )}
-      {cur < total - 1 && (
+      {!leafDir && cur < total - 1 && (
         <button
-          onClick={goNext}
           aria-label="Next page"
+          onClick={() => {
+            if (isAnimating.current || cur >= total - 1) return;
+            isAnimating.current = true;
+            pendingFlip.current = 'next';
+            setLeafDir('next');
+          }}
           style={{
-            position: 'fixed', bottom: 24, right: 20, zIndex: 60,
+            position: 'fixed', bottom: 24, right: 16, zIndex: 60,
             width: 36, height: 36, borderRadius: '50%',
             border: '1px solid rgba(0,0,0,.18)',
-            background: 'rgba(247,244,236,.9)',
-            fontSize: 16, cursor: 'pointer',
+            background: 'rgba(247,244,236,.92)',
+            fontSize: 18, cursor: 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 2px 10px rgba(0,0,0,.15)',
+            boxShadow: '0 2px 10px rgba(0,0,0,.18)',
           }}
         >›</button>
       )}
-    </>
+    </div>
   );
 }
+
 
 // ─── Root export ──────────────────────────────────────────────────────────────
 // Chooses Desktop or Mobile based on window width.
