@@ -1,0 +1,28 @@
+{
+  "name": "The NC Times",
+  "shortName": "TheNCTimes",
+  "tagline": "Helping Businesses Grow — One Strategy At A Time",
+  "description": "TheNCTimes — a personal portfolio for Nikhil Chandra, typeset and turned like a physical newspaper.",
+  "url": "https://thenctimes.in",
+  "publine": "Founded by Nikhil Chandra · Vol. I No. 1 · New Delhi · Consulting Edition",
+  "edition": "Vol. I · No. 1 · Est. 2026",
+  "author": {
+    "name": "Nikhil Chandra",
+    "role": "Growth Consultant",
+    "location": "New Delhi, India",
+    "email": "hello@thenctimes.in",
+    "linkedin": "/in/nikhilchandra",
+    "twitter": "@nikhilchandra"
+  },
+  "nav": [
+    { "label": "Consulting", "page": 2 },
+    { "label": "Projects", "page": 3 },
+    { "label": "About & Contact", "page": 4 }
+  ],
+  "stats": [
+    { "label": "Industries advised", "value": "12+" },
+    { "label": "Engagements delivered", "value": "40+" },
+    { "label": "Mentees / month", "value": "6" },
+    { "label": "Client revenue impact", "value": "₹100Cr+" }
+  ]
+}

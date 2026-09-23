@@ -1,0 +1,37 @@
+{
+  "by-the-numbers": {
+    "title": "By The Numbers",
+    "type": "stats",
+    "items": [
+      { "label": "Industries advised", "value": "12+" },
+      { "label": "Engagements delivered", "value": "40+" },
+      { "label": "Mentees / month", "value": "6" },
+      { "label": "Client revenue impact", "value": "₹100Cr+" }
+    ]
+  },
+  "revenue-chart": {
+    "title": "Revenue Impact, By Year",
+    "type": "chart",
+    "bars": [
+      { "value": "1.0x", "label": "'22", "height": 30 },
+      { "value": "1.4x", "label": "'23", "height": 46 },
+      { "value": "1.9x", "label": "'24", "height": 64 },
+      { "value": "2.3x", "label": "'25", "height": 82 },
+      { "value": "2.8x", "label": "'26", "height": 100 }
+    ]
+  },
+  "classifieds": {
+    "title": "Classifieds",
+    "type": "classifieds",
+    "ads": [
+      { "label": "Available", "text": "New consulting engagements — Q3 2026 onward." },
+      { "label": "Email", "text": "hello@thenctimes.in" },
+      { "label": "LinkedIn", "text": "/in/nikhilchandra" },
+      { "label": "Location", "text": "New Delhi, India — works globally." }
+    ]
+  },
+  "colophon": {
+    "type": "colophon",
+    "text": "TheNCTimes is a personal portfolio published by Nikhil Chandra. Stories are accounts of real and representative work; some names and figures are illustrative. Typeset in Playfair Display, Source Serif 4 and IBM Plex Mono. Built with care, not a content calendar. © 2026 The NC Times."
+  }
+}
