@@ -1,4 +1,4 @@
-# The NCTimes — Interactive Editorial Portfolio
+# TheNCTimes — Interactive Editorial Portfolio
 
 A unique, interactive editorial portfolio website styled as a classic broadsheet newspaper, built for a freelance client w/ Next.js and custom CSS 3D transforms, it offers a tactile, engaging experience for showcasing projects, articles, case studies, and career achievements.
 
