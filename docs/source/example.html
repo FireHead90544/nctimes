@@ -1,0 +1,1660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The NC Times — Nikhil Chandra</title>
+<meta name="description" content="TheNCTimes — a personal portfolio for Nikhil Chandra, typeset and turned like a physical newspaper.">
+
+<!--
+  ════════════════════════════════════════════════════════════════════
+  REFERENCE BUILD — STATIC SINGLE FILE
+  ════════════════════════════════════════════════════════════════════
+  This file exists purely to lock down the FINAL VISUAL LOOK and the
+  interaction model (hover / click-to-open / physical page turn) before
+  the Next.js + MDX rewrite described in CLAUDE.md.
+
+  IMPORTANT NOTE FOR THE NEXT.JS PORT:
+  In this static demo, each page's markup lives inside a hidden
+  <div id="content-*" style="display:none"> "master copy" and JS clones
+  it into the visible page slots so the same markup can be reused on
+  both sides of a page-turn. That's a convenience for a single static
+  file — it is NOT SEO-correct (display:none content is not crawlable).
+  In the real Next.js build, per CLAUDE.md, article content must be
+  server-rendered directly (visible HTML / sr-only index), not hidden
+  and cloned by JS. Treat the markup/CSS/copy here as the source of
+  truth for LOOK; treat CLAUDE.md as the source of truth for ARCHITECTURE.
+  ════════════════════════════════════════════════════════════════════
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,800;0,900;1,500;1,700&family=Source+Serif+4:ital,wght@0,300;0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+
+/* ════════════════════════════════════════════════════════════════
+   0. RESET & ROOT VARIABLES
+   ════════════════════════════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+:root{
+  --font-headline: 'Playfair Display', Georgia, serif;
+  --font-body: 'Source Serif 4', 'Times New Roman', serif;
+  --font-meta: 'IBM Plex Mono', 'Courier New', monospace;
+
+  --paper:        #F7F4EC;
+  --paper-alt:    #EEE9DC;
+  --ink:          #1A1A1A;
+  --ink-2:        #4A4A4A;
+  --rule-heavy:   #141414;
+  --rule-light:   #C8C2B3;
+  --accent:       #C0102A;
+  --accent-dark:  #850B1C;
+  --hover-tint:   rgba(0,0,0,.055);
+  --backdrop:     rgba(14,12,10,.92);
+
+  --page-w: 720px;
+  --page-h: 980px;
+  --spine-w: 7px;
+}
+
+body{
+  background: var(--paper);  /* matches page color — letterbox bands vanish */
+  font-family: var(--font-body);
+  color: var(--ink);
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   1. STAGE / BOOK MECHANICS (desktop two-page spread)
+   ════════════════════════════════════════════════════════════════ */
+#stage{
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  perspective: 3200px;
+  /* No flexbox — book is absolutely positioned by JS */
+}
+
+#book{
+  position: absolute;
+  width: calc(var(--page-w) * 2 + var(--spine-w));
+  height: var(--page-h);
+  transform-style: preserve-3d;
+  transform-origin: top left; /* JS sets left/top offset + scale — see applyScale() */
+}
+
+.page-slot{
+  position: absolute;
+  top: 0;
+  width: var(--page-w);
+  height: var(--page-h);
+  background: var(--paper);
+  overflow: hidden;
+  z-index: 1;
+}
+.page-slot.slot-left{ left: 0; }
+.page-slot.slot-right{ left: calc(var(--page-w) + var(--spine-w)); }
+
+#spine{
+  position: absolute;
+  left: var(--page-w);
+  top: 0;
+  width: var(--spine-w);
+  height: var(--page-h);
+  z-index: 2;
+  background: linear-gradient(90deg,
+    rgba(0,0,0,.18) 0%,
+    rgba(0,0,0,.04) 30%,
+    rgba(0,0,0,.04) 70%,
+    rgba(0,0,0,.18) 100%);
+  pointer-events: none;
+}
+
+.leaf{
+  position: absolute;
+  top: 0;
+  width: var(--page-w);
+  height: var(--page-h);
+  transform-style: preserve-3d;
+  z-index: 20;
+  display: none;
+  pointer-events: none; /* contents become clickable again once settled into a slot */
+}
+.leaf-face{
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  background: var(--paper);
+  overflow: hidden;
+  box-shadow: 0 0 40px rgba(0,0,0,.25);
+}
+.leaf-face.front{ transform: rotateY(0deg); }
+.leaf-face.back{  transform: rotateY(180deg); }
+
+/* spine-side gradient on pages removed — paper background makes them invisible anyway */
+
+/* ════════════════════════════════════════════════════════════════
+   2. NAV CONTROLS
+   ════════════════════════════════════════════════════════════════ */
+.nav-arrow{
+  position: fixed;
+  /* top set by JS in applyScale(), vertically centered on the spread */
+  transform: translateY(-50%);
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(18,16,13,.82);
+  color: #F4F1E8;
+  font-size: 19px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 50;
+  transition: background .15s ease;
+  box-shadow: 0 6px 18px rgba(0,0,0,.35);
+}
+.nav-arrow:hover{ background: rgba(18,16,13,.95); }
+.nav-arrow:active{ transform: translateY(-50%) scale(.94); }
+.nav-arrow.disabled{ opacity: .25; pointer-events: none; }
+#prevBtn{ left: 18px; }
+#nextBtn{ right: 18px; }
+
+#pageIndicator{
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-meta);
+  color: #F4F1E8;
+  background: rgba(18,16,13,.82);
+  border: 1px solid rgba(255,255,255,.1);
+  padding: 9px 20px 11px;
+  border-radius: 18px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.35);
+  /* bottom set by JS after applyScale so it clears the spread */
+  bottom: 12px;
+}
+#pageIndicator .label{
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  opacity: .85;
+}
+.dots{ display:flex; gap:8px; }
+.dot{
+  width: 7px; height: 7px; border-radius: 50%;
+  background: rgba(237,232,219,.35);
+  cursor: pointer;
+  transition: background .15s ease, transform .15s ease;
+}
+.dot:hover{ background: rgba(237,232,219,.6); }
+.dot.active{ background: var(--accent); transform: scale(1.25); }
+
+/* ════════════════════════════════════════════════════════════════
+   3. NEWSPAPER PAGE CANVAS — shared by desktop + mobile
+   ════════════════════════════════════════════════════════════════ */
+.page-canvas{
+  position: relative;
+  width: var(--page-w);
+  height: var(--page-h);
+  background: var(--paper);
+  color: var(--ink);
+}
+.page-canvas::before{
+  /* subtle aged-paper vignette */
+  content:'';
+  position:absolute; inset:0;
+  background: radial-gradient(ellipse at 50% 0%, rgba(0,0,0,0) 55%, rgba(0,0,0,.035) 100%);
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* -------- Column rule (decorative vertical hairline) -------- */
+.col-rule{
+  position: absolute;
+  width: 1px;
+  background: var(--rule-light);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* -------- Masthead (front page only) -------- */
+.masthead{ position:absolute; top:0; left:0; width:100%; padding: 0 20px; }
+.m-utility{
+  display:flex; justify-content:space-between; align-items:center;
+  font: 500 8.5px/1 var(--font-meta);
+  letter-spacing:.04em; text-transform:uppercase; color: var(--ink-2);
+  padding: 8px 0 6px;
+}
+.m-rule.heavy{ border-top: 2.5px solid var(--rule-heavy); }
+.m-rule.thin{ border-top: 1px solid var(--rule-heavy); margin-top: 2px; }
+.m-publine{
+  text-align:center;
+  font: 600 8px/1 var(--font-meta);
+  letter-spacing:.08em; text-transform:uppercase; color: var(--ink-2);
+  padding: 7px 0 2px;
+}
+.m-title{
+  text-align:center;
+  font: 900 56px/1 var(--font-headline);
+  letter-spacing:.12em;
+  padding: 6px 0 4px;
+}
+.m-tagline{
+  text-align:center;
+  font: italic 400 11.5px/1.3 var(--font-body);
+  color: var(--ink-2);
+  padding-bottom: 9px;
+}
+.m-nav{ display:flex; }
+.m-nav-item{
+  flex:1; text-align:center; padding: 8px 4px;
+  border-right: 1px solid var(--rule-light);
+  cursor:pointer;
+  transition: background-color .15s ease;
+}
+.m-nav-item:last-child{ border-right:none; }
+.m-nav-item:hover{ background: var(--hover-tint); }
+.m-nav-label{
+  display:block;
+  font:700 9.5px/1 var(--font-meta); letter-spacing:.07em;
+  color: var(--accent);
+}
+.m-nav-page{
+  display:block; margin-top:3px;
+  font:500 8px/1 var(--font-meta); color: var(--ink-2); letter-spacing:.03em;
+}
+
+/* -------- Page header (interior pages) -------- */
+.page-header{
+  position:absolute; top:0; left:0; width:100%;
+  display:flex; align-items:center; gap:10px;
+  padding: 12px 20px 8px;
+  border-bottom: 2.5px solid var(--rule-heavy);
+}
+.ph-num{
+  font:800 17px/1 var(--font-headline);
+  background: var(--ink); color: var(--paper);
+  width:24px; height:24px; display:flex; align-items:center; justify-content:center;
+  flex-shrink:0;
+}
+.ph-section{
+  font:700 15px/1 var(--font-headline);
+  letter-spacing:.02em;
+  flex: 1;
+}
+.ph-meta{
+  font:500 8px/1 var(--font-meta); letter-spacing:.03em; text-transform:uppercase;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+/* -------- Page footer / folio -------- */
+.page-folio{
+  position:absolute; bottom:0; left:0; width:100%;
+  display:flex; justify-content:space-between; align-items:center;
+  padding: 6px 20px;
+  border-top: 1px solid var(--rule-light);
+  font: 700 8.5px/1 var(--font-meta); letter-spacing:.08em; text-transform:uppercase;
+  color: var(--ink-2);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   4. ARTICLE BLOCKS
+   ════════════════════════════════════════════════════════════════ */
+.article{
+  position: absolute;
+  overflow: hidden;
+  padding: 7px 11px 8px;
+  cursor: pointer;
+  z-index: 2;
+  transition: background-color .14s ease-in-out;
+}
+.article:hover{ background-color: var(--hover-tint); }
+
+.kicker{
+  font:700 8px/1 var(--font-meta);
+  letter-spacing:.07em; text-transform:uppercase;
+  color: var(--accent);
+  margin-bottom: 5px;
+}
+.kicker.alt{ color: var(--ink-2); }
+
+.h-xl{ font:800 31px/1.06 var(--font-headline); letter-spacing:-.005em; margin-bottom:6px; }
+.h-lg{ font:700 21px/1.12 var(--font-headline); margin-bottom:5px; }
+.h-md{ font:700 16.5px/1.18 var(--font-headline); margin-bottom:4px; }
+.h-sm{ font:600 13px/1.22 var(--font-headline); margin-bottom:4px; }
+.h-xs{ font:600 11px/1.25 var(--font-headline); margin-bottom:3px; }
+
+.deck{
+  font:italic 400 10.5px/1.38 var(--font-body);
+  color:#333; margin-bottom:5px;
+}
+
+.byline{
+  font:500 8px/1.2 var(--font-meta);
+  text-transform:uppercase; letter-spacing:.03em;
+  color: var(--ink-2);
+  margin-bottom: 5px;
+}
+
+.h-rule{ border-top:1px solid var(--rule-light); margin: 0 0 6px; }
+
+.body-text{
+  font:400 9.6px/1.46 var(--font-body);
+  text-align: justify;
+  hyphens: auto; -webkit-hyphens: auto;
+  color: var(--ink);
+}
+.body-text .dateline{ font-weight:700; }
+
+.clamp-3{ display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+.clamp-4{ display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden; }
+.clamp-5{ display:-webkit-box; -webkit-line-clamp:5; -webkit-box-orient:vertical; overflow:hidden; }
+.clamp-6{ display:-webkit-box; -webkit-line-clamp:6; -webkit-box-orient:vertical; overflow:hidden; }
+.clamp-8{ display:-webkit-box; -webkit-line-clamp:8; -webkit-box-orient:vertical; overflow:hidden; }
+.clamp-10{ display:-webkit-box; -webkit-line-clamp:10; -webkit-box-orient:vertical; overflow:hidden; }
+.clamp-12{ display:-webkit-box; -webkit-line-clamp:12; -webkit-box-orient:vertical; overflow:hidden; }
+
+.crossref{
+  position:absolute; left:11px; bottom:8px;
+  font:700 8.5px/1 var(--font-meta);
+  color: var(--accent);
+  letter-spacing:.02em;
+}
+
+.read-hint{
+  position:absolute; right:11px; bottom:8px;
+  font:700 7.5px/1 var(--font-meta);
+  letter-spacing:.06em; text-transform:uppercase;
+  color: var(--accent);
+  opacity:0; transform: translateY(4px);
+  transition: opacity .15s ease, transform .15s ease;
+  pointer-events:none;
+}
+.article:hover .read-hint{ opacity:1; transform:translateY(0); }
+
+/* -------- Photo placeholders (editorial duotone, no network needed) -------- */
+.photo{
+  position:relative; width:100%; aspect-ratio: 16/10;
+  overflow:hidden; margin-bottom:6px;
+}
+.photo::after{
+  content:'';
+  position:absolute; inset:0;
+  background-image: radial-gradient(rgba(0,0,0,.55) .6px, transparent .6px);
+  background-size: 3px 3px;
+  mix-blend-mode: multiply;
+  opacity:.35;
+}
+.photo .p-label{
+  position:absolute; left:6px; bottom:5px; z-index:2;
+  font:600 7.5px/1.2 var(--font-meta); letter-spacing:.03em;
+  color: rgba(255,255,255,.92); text-transform:uppercase;
+  text-shadow: 0 1px 3px rgba(0,0,0,.5);
+}
+.ph-a{ background: linear-gradient(135deg,#3c3326,#86714f); }
+.ph-b{ background: linear-gradient(135deg,#1c2a3a,#3f6079); }
+.ph-c{ background: linear-gradient(135deg,#3a1d21,#7e3b40); }
+.ph-d{ background: linear-gradient(135deg,#23241e,#5a5c4d); }
+.ph-e{ background: linear-gradient(135deg,#2c2419,#8c5a32); }
+figcaption.cap{ font:italic 400 8px/1.3 var(--font-body); color:#666; margin-top:2px; }
+
+/* -------- Decorative (non-clickable) info boxes -------- */
+.infobox{
+  position:absolute;
+  border: 1px solid var(--rule-light);
+  overflow:hidden;
+}
+.infobox-head{
+  background: var(--accent); color:#fff;
+  font:700 9px/1 var(--font-meta); letter-spacing:.07em; text-transform:uppercase;
+  padding: 6px 10px;
+}
+.infobox-body{ padding: 9px 11px; }
+.stat-row{
+  display:flex; justify-content:space-between; align-items:baseline;
+  padding: 5px 0; border-bottom: 1px dashed var(--rule-light);
+  font: 400 9.5px var(--font-body);
+}
+.stat-row:last-child{ border-bottom:none; }
+.stat-num{ font:800 14px var(--font-headline); color: var(--accent); }
+
+.chart-bars{ display:flex; align-items:flex-end; gap:9px; height:96px; margin: 10px 0 4px; }
+.chart-bar{ flex:1; background: linear-gradient(180deg,#d6443f,var(--accent)); position:relative; }
+.chart-bar span{
+  position:absolute; bottom:100%; left:0; right:0; text-align:center;
+  font:700 8px var(--font-meta); color: var(--ink); margin-bottom:3px;
+}
+.chart-bar em{
+  position:absolute; top:100%; left:0; right:0; text-align:center; font-style:normal;
+  font:600 7.5px var(--font-meta); color: var(--ink-2); margin-top:4px;
+}
+
+.quote-box{
+  position:absolute;
+  border-top: 3px solid var(--ink);
+  border-bottom: 3px solid var(--ink);
+  padding: 14px 14px 12px;
+  display:flex; flex-direction:column; justify-content:center;
+}
+.quote-box p{
+  font: italic 600 14px/1.4 var(--font-headline);
+  color: var(--ink);
+}
+.quote-box cite{
+  display:block; margin-top:10px;
+  font:600 8px var(--font-meta); letter-spacing:.05em; text-transform:uppercase;
+  color: var(--accent); font-style:normal;
+}
+
+.classifieds{ position:absolute; }
+.classifieds h4{
+  font:700 9px var(--font-meta); letter-spacing:.07em; text-transform:uppercase;
+  color: var(--accent); margin-bottom:8px; padding-bottom:5px;
+  border-bottom: 1px solid var(--rule-light);
+}
+.classified-ad{
+  border:1px solid var(--rule-light); padding:7px 9px; margin-bottom:7px;
+  font: 400 9px/1.4 var(--font-body);
+}
+.classified-ad b{ display:block; font:700 8.5px var(--font-meta); letter-spacing:.04em; margin-bottom:3px; color:var(--ink);}
+
+.colophon{
+  position:absolute;
+  font:400 7.5px/1.55 var(--font-body); color:#777;
+  border-top: 1px solid var(--rule-light);
+  padding-top:8px;
+}
+
+.timeline-row{ display:flex; gap:6px; margin: 8px 0; }
+.timeline-item{
+  flex:1; text-align:center; padding: 6px 4px; background: var(--paper-alt);
+  border-top: 2px solid var(--accent);
+}
+.timeline-item b{ display:block; font:800 13px var(--font-headline); }
+.timeline-item span{ display:block; font:500 7px var(--font-meta); color:var(--ink-2); text-transform:uppercase; letter-spacing:.04em; margin-top:2px; }
+
+/* -------- Cover pages -------- */
+.cover{
+  position:relative; width:100%; height:100%;
+  background: radial-gradient(ellipse at 50% 30%, #232019 0%, #17150f 75%);
+  color:#F2EFE6;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  text-align:center;
+  cursor:pointer;
+}
+.cover .mono{ font:700 32px var(--font-headline); width:78px; height:78px; border:2px solid var(--accent); border-radius:50%; display:flex; align-items:center; justify-content:center; margin-bottom:26px; }
+.cover h2{ font:800 30px/1.1 var(--font-headline); letter-spacing:.1em; margin-bottom:10px; }
+.cover p.cv-tag{ font:italic 11px var(--font-body); color:#C9C2AD; margin-bottom:34px; }
+.cover .cv-cta{
+  font:700 9px var(--font-meta); letter-spacing:.1em; text-transform:uppercase;
+  color: var(--accent); border:1px solid var(--accent); padding:9px 18px;
+  transition: background-color .15s ease, color .15s ease;
+}
+.cover:hover .cv-cta{ background: var(--accent); color:#fff; }
+.cover .cv-vol{ position:absolute; top:24px; font:500 8px var(--font-meta); letter-spacing:.1em; color:#7d7669; text-transform:uppercase; }
+.cover .cv-foot{ position:absolute; bottom:24px; font:500 8px var(--font-meta); letter-spacing:.1em; color:#7d7669; text-transform:uppercase; }
+
+/* ════════════════════════════════════════════════════════════════
+   5. MOBILE STAGE (single page, swipe)
+   ════════════════════════════════════════════════════════════════ */
+#mobileStage{
+  position: fixed; inset:0; display:none;
+  overflow: hidden;
+  /* No flexbox — mobilePageWrap is absolutely positioned by JS */
+}
+#mobilePageWrap{
+  position: absolute;
+  width: var(--page-w); height: var(--page-h);
+  transform-origin: top left; /* JS sets left/top offset + scale */
+  overflow: hidden;
+  touch-action: pan-y;
+}
+#mobileSlot{ width:100%; height:100%; }
+
+/* ════════════════════════════════════════════════════════════════
+   6. MODAL — full article popup
+   ════════════════════════════════════════════════════════════════ */
+#modalOverlay{
+  position: fixed; inset:0; z-index: 1000;
+  background: var(--backdrop);
+  display:flex; align-items:center; justify-content:center;
+  opacity:0; visibility:hidden;
+  transition: opacity .25s ease, visibility .25s ease;
+  padding: 24px;
+}
+#modalOverlay.open{ opacity:1; visibility:visible; }
+
+.modal{
+  width:min(1080px,100%);
+  height:min(840px,100%);
+  background: var(--paper);
+  display:flex; flex-direction:column;
+  box-shadow: 0 40px 100px rgba(0,0,0,.6);
+  transform: scale(.95) translateY(10px);
+  transition: transform .28s cubic-bezier(.2,.8,.3,1);
+}
+#modalOverlay.open .modal{ transform: scale(1) translateY(0); }
+
+.modal-topbar{
+  display:flex; align-items:center; justify-content:space-between;
+  padding: 13px 26px;
+  border-bottom: 2.5px solid var(--rule-heavy);
+  flex-shrink:0;
+}
+.modal-topbar .mt-left{ font:700 9px var(--font-meta); letter-spacing:.08em; text-transform:uppercase; color: var(--accent); }
+.modal-topbar .mt-right{ display:flex; align-items:center; gap:18px; }
+.modal-topbar .mt-date{ font:500 9px var(--font-meta); letter-spacing:.04em; text-transform:uppercase; color: var(--ink-2); }
+.modal-close{
+  width:30px; height:30px; border-radius:50%; border:1px solid var(--rule-light);
+  background:transparent; cursor:pointer; font-size:15px; color:var(--ink);
+  display:flex; align-items:center; justify-content:center;
+  transition: background-color .15s ease;
+}
+.modal-close:hover{ background: var(--hover-tint); }
+
+.modal-headblock{ padding: 20px 30px 16px; border-bottom: 1px solid var(--rule-light); flex-shrink:0; }
+.modal-headline{ font:800 32px/1.1 var(--font-headline); margin-bottom:8px; }
+.modal-deck{ font:italic 400 14px/1.42 var(--font-body); color:#333; margin-bottom:10px; }
+.modal-byline{ font:500 9.5px var(--font-meta); letter-spacing:.05em; text-transform:uppercase; color:var(--ink-2); }
+
+.modal-content-area{ flex:1; display:flex; min-height:0; }
+
+.modal-body{
+  flex: 1 1 72%;
+  overflow-y:auto;
+  padding: 24px 30px 36px;
+  column-count: 2;
+  column-gap: 30px;
+  column-rule: 1px solid var(--rule-light);
+}
+.modal-body p{
+  font:400 13px/1.62 var(--font-body);
+  text-align:justify; hyphens:auto;
+  margin-bottom: 13px;
+}
+.modal-body p:first-of-type::first-letter{
+  font-family: var(--font-headline);
+  font-weight:800;
+  font-size: 3.4em;
+  line-height:.78;
+  float:left;
+  padding: 4px 7px 0 0;
+}
+.modal-pullquote{
+  column-span: all;
+  border-left: 4px solid var(--accent);
+  padding: 4px 22px;
+  margin: 6px 0 18px;
+}
+.modal-pullquote p{ font:italic 500 18px/1.45 var(--font-headline); color:#222; margin:0; }
+.modal-pullquote cite{ display:block; margin-top:9px; font:600 9px var(--font-meta); font-style:normal; letter-spacing:.06em; text-transform:uppercase; color:#888; }
+
+.modal-figure{ column-span: all; margin: 4px 0 18px; }
+.modal-figure .photo{ aspect-ratio: 21/9; }
+.modal-figure figcaption{ font:italic 400 9.5px/1.4 var(--font-body); color:#666; margin-top:5px; }
+
+.modal-gallery{ column-span:all; display:grid; grid-template-columns: repeat(3,1fr); gap:10px; margin: 4px 0 18px; }
+.modal-gallery .photo{ aspect-ratio: 4/3; margin-bottom:0; }
+.modal-gallery figcaption{ font:italic 400 8.5px/1.3 var(--font-body); color:#666; margin-top:3px; }
+
+.modal-video{ column-span:all; margin: 4px 0 18px; }
+.video-embed{
+  position:relative; width:100%; aspect-ratio:16/9;
+  background: linear-gradient(135deg,#16181c,#2a2e36);
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+}
+.video-embed::after{
+  content:''; position:absolute; inset:0;
+  background-image: repeating-linear-gradient(0deg, rgba(255,255,255,.02) 0 2px, transparent 2px 4px);
+}
+.video-play{
+  width:58px; height:58px; border-radius:50%;
+  background: rgba(247,244,236,.95);
+  display:flex; align-items:center; justify-content:center;
+  z-index:2; box-shadow:0 6px 18px rgba(0,0,0,.4);
+}
+.video-play svg{ margin-left:3px; }
+.video-embed .v-label{
+  position:absolute; bottom:10px; left:14px; z-index:2;
+  font:600 9px var(--font-meta); letter-spacing:.04em; text-transform:uppercase; color:#F2EFE6;
+}
+.video-caption{ font:italic 400 9.5px/1.4 var(--font-body); color:#666; margin-top:6px; }
+
+.modal-sidebar{
+  flex: 0 0 28%;
+  max-width: 300px;
+  background: var(--paper-alt);
+  border-left: 2px solid var(--rule-heavy);
+  padding: 26px 24px;
+  overflow-y:auto;
+}
+.modal-sidebar h4{
+  font:700 10.5px var(--font-meta); letter-spacing:.07em; text-transform:uppercase;
+  color: var(--accent); margin-bottom:13px; padding-bottom:8px;
+  border-bottom: 1px solid var(--rule-light);
+}
+.modal-sidebar ul{ list-style:none; }
+.modal-sidebar li{
+  font:400 12px/1.55 var(--font-body); margin-bottom:11px; padding-left:15px; position:relative;
+}
+.modal-sidebar li::before{ content:'■'; color:var(--accent); font-size:7px; position:absolute; left:0; top:5px; }
+.modal-meta-box{
+  margin-top:22px; padding-top:15px; border-top:1px dashed var(--rule-light);
+  font:500 9.5px var(--font-meta); letter-spacing:.03em; color:#888;
+}
+.modal-meta-box div{ margin-bottom:6px; text-transform:uppercase; }
+.modal-meta-box b{ color: var(--ink); }
+
+/* scrollbar polish */
+.modal-body::-webkit-scrollbar, .modal-sidebar::-webkit-scrollbar{ width:8px; }
+.modal-body::-webkit-scrollbar-thumb, .modal-sidebar::-webkit-scrollbar-thumb{ background: var(--rule-light); }
+.modal-body::-webkit-scrollbar-track, .modal-sidebar::-webkit-scrollbar-track{ background: transparent; }
+
+/* ════════════════════════════════════════════════════════════════
+   7. RESPONSIVE — mobile modal becomes a bottom sheet
+   ════════════════════════════════════════════════════════════════ */
+@media (max-width: 880px){
+  #stage{ display:none; }
+  .nav-arrow{ width:40px; height:40px; }
+  #prevBtn{ left:10px; } #nextBtn{ right:10px; }
+
+  #modalOverlay{ padding:0; align-items:flex-end; }
+  .modal{ width:100%; height:92vh; }
+  .modal-content-area{ flex-direction:column; overflow-y:auto; }
+  .modal-body{ column-count:1; overflow-y:visible; padding:18px 18px 24px; }
+  .modal-sidebar{ max-width:none; border-left:none; border-top:2px solid var(--rule-heavy); }
+  .modal-headline{ font-size:24px; }
+}
+@media (min-width: 881px){
+  #mobileStage{ display:none !important; }
+}
+
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════════════
+     DESKTOP STAGE — two-page spread with physical flip
+     ════════════════════════════════════════════════════════════════ -->
+<div id="stage">
+  <div id="book">
+    <div class="page-slot slot-left"  id="leftSlot"></div>
+    <div id="spine"></div>
+    <div class="page-slot slot-right" id="rightSlot"></div>
+
+    <div class="leaf" id="leaf">
+      <div class="leaf-face front" id="leafFront"></div>
+      <div class="leaf-face back"  id="leafBack"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     MOBILE STAGE — single page, swipe / arrows
+     ════════════════════════════════════════════════════════════════ -->
+<div id="mobileStage">
+  <div id="mobilePageWrap">
+    <div id="mobileSlot"></div>
+  </div>
+</div>
+
+<!-- Shared navigation -->
+<div class="nav-arrow" id="prevBtn" aria-label="Previous page">&#8249;</div>
+<div class="nav-arrow" id="nextBtn" aria-label="Next page">&#8250;</div>
+<div id="pageIndicator">
+  <div class="label" id="indicatorLabel">Front Page</div>
+  <div class="dots" id="dots"></div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     ARTICLE MODAL
+     ════════════════════════════════════════════════════════════════ -->
+<div id="modalOverlay">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-topbar">
+      <div class="mt-left" id="modalKicker">SECTION</div>
+      <div class="mt-right">
+        <div class="mt-date" id="modalDate">SUNDAY, 21 JUNE 2026</div>
+        <button class="modal-close" data-close-modal aria-label="Close">&times;</button>
+      </div>
+    </div>
+    <div class="modal-headblock">
+      <h1 class="modal-headline" id="modalHeadline">Headline</h1>
+      <p class="modal-deck" id="modalDeck"></p>
+      <div class="modal-byline" id="modalByline"></div>
+    </div>
+    <div class="modal-content-area">
+      <div class="modal-body" id="modalBody"><!-- cloned <template> content goes here --></div>
+      <aside class="modal-sidebar">
+        <h4>Key Points</h4>
+        <ul id="modalSummary"></ul>
+        <div class="modal-meta-box">
+          <div>Reading time: <b id="modalReadTime">3 min</b></div>
+          <div>Filed under: <b id="modalCategory">Career</b></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════════
+     ═══   PAGE CONTENT MASTERS (cloned into slots by JS)   ═══
+     ════════════════════════════════════════════════════════════════ -->
+
+<!-- ───────────────────────── FRONT COVER ───────────────────────── -->
+<div id="content-cover-front" style="display:none">
+  <div class="cover" onclick="onCoverClick()">
+    <div class="cv-vol">Vol. I &nbsp;·&nbsp; No. 1 &nbsp;·&nbsp; Est. 2026</div>
+    <div class="mono">NC</div>
+    <h2>THE&nbsp;NC&nbsp;TIMES</h2>
+    <p class="cv-tag">A Portfolio, Typeset Like A Newspaper</p>
+    <div class="cv-cta">Open To Begin Reading ▸</div>
+    <div class="cv-foot">Nikhil Chandra &nbsp;—&nbsp; Growth Consultant</div>
+  </div>
+</div>
+
+<!-- ───────────────────────── PAGE 1 — FRONT PAGE ───────────────────────── -->
+<div id="content-p1" style="display:none">
+  <div class="page-canvas">
+
+    <div class="masthead">
+      <div class="m-utility"><span>www.thenctimes.in</span><span>Sunday, 21 June 2026</span></div>
+      <div class="m-rule heavy"></div>
+      <div class="m-publine">Founded by Nikhil Chandra &nbsp;•&nbsp; Vol. I No. 1 &nbsp;•&nbsp; New Delhi &nbsp;•&nbsp; Consulting Edition</div>
+      <h1 class="m-title">THE NC TIMES</h1>
+      <div class="m-tagline">"Helping Businesses Grow — One Strategy At A Time"</div>
+      <div class="m-rule heavy"></div>
+      <div class="m-nav">
+        <div class="m-nav-item" onclick="jumpToSpread(1)"><span class="m-nav-label">Consulting</span><span class="m-nav-page">▸ Page 2</span></div>
+        <div class="m-nav-item" onclick="jumpToSpread(1)"><span class="m-nav-label">Projects</span><span class="m-nav-page">▸ Page 3</span></div>
+        <div class="m-nav-item" onclick="jumpToSpread(2)"><span class="m-nav-label">About &amp; Contact</span><span class="m-nav-page">▸ Page 4</span></div>
+      </div>
+      <div class="m-rule thin"></div>
+    </div>
+
+    <!-- column rules -->
+    <div class="col-rule" style="left:245px; top:240px; height:660px;"></div>
+    <div class="col-rule" style="left:475px; top:240px; height:660px;"></div>
+
+    <!-- LANE A (col 1-2) -->
+    <article class="article" data-article="campus-to-boardroom" style="top:240px; left:20px; width:220px; height:300px;">
+      <div class="kicker">Early Years</div>
+      <h3 class="h-sm">From Campus To Boardroom: The First Five Years</h3>
+      <div class="h-rule"></div>
+      <div class="byline">Desk Report</div>
+      <p class="body-text clamp-10"><span class="dateline">New Delhi: </span>Long before TheNCTimes existed, Nikhil Chandra spent his first five working years moving between operations floors and client war-rooms, learning — slowly, then all at once — what actually moves a business forward.</p>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <article class="article" data-article="three-principles" style="top:540px; left:20px; width:220px; height:360px;">
+      <div class="kicker">Philosophy</div>
+      <h3 class="h-md">Three Principles I Have Never Negotiated On</h3>
+      <div class="h-rule"></div>
+      <div class="byline">Opinion</div>
+      <p class="body-text clamp-12"><span class="dateline">New Delhi: </span>Across forty-odd engagements, Nikhil Chandra has held to three rules that, he says, have never once produced a bad outcome — even when they made the room uncomfortable.</p>
+      <div class="crossref">▶ Full essay inside</div>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <!-- LANE B (col 3-4) — HERO -->
+    <article class="article" data-article="launching-nctimes" style="top:240px; left:250px; width:220px; height:410px;">
+      <div class="kicker">Founding Story</div>
+      <h2 class="h-xl">TheNCTimes Launches Today: A Consultant's Life Told In Print</h2>
+      <p class="deck">A new kind of portfolio — built like a broadsheet, not a brochure.</p>
+      <figure class="photo ph-b"><span class="p-label">Photo: First Proof, June 2026</span></figure>
+      <div class="byline">Staff Reporter</div>
+      <p class="body-text clamp-4"><span class="dateline">New Delhi: </span>Nikhil Chandra, the New Delhi-based growth consultant, today unveiled TheNCTimes — a personal portfolio typeset and turned like an actual newspaper, columns and all.</p>
+      <div class="crossref">▶ About this paper, Page 4</div>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <article class="article" data-article="six-startups-one-month" style="top:650px; left:250px; width:220px; height:250px;">
+      <div class="kicker">Advisory At Scale</div>
+      <h3 class="h-lg">When Six Startups Called In One Month</h3>
+      <div class="h-rule"></div>
+      <div class="byline">Business Desk</div>
+      <p class="body-text clamp-8"><span class="dateline">Gurgaon: </span>A single April week brought six unrelated founders to Nikhil Chandra's inbox, each asking some version of the same question: how do we grow without breaking what already works?</p>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <!-- LANE C (col 5-6) -->
+    <article class="article" data-article="client-win-40cr" style="top:240px; left:480px; width:220px; height:260px;">
+      <div class="kicker">Client Work</div>
+      <h3 class="h-lg">How A ₹40 Crore Mandate Became A Blueprint For Scaling Mid-Cap Firms</h3>
+      <figure class="photo ph-a"><span class="p-label">Photo: Strategy Workshop</span></figure>
+      <div class="byline">Business Desk</div>
+      <p class="body-text clamp-4"><span class="dateline">Gurgaon: </span>An eighteen-month mandate with a mid-cap manufacturer became the template Nikhil Chandra now reaches for first.</p>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <article class="article" data-article="business-excellence-award" style="top:500px; left:480px; width:220px; height:180px;">
+      <div class="kicker">Recognition</div>
+      <h3 class="h-sm">National Business Excellence Award Goes To Nikhil Chandra</h3>
+      <div class="h-rule"></div>
+      <div class="byline">Desk Report</div>
+      <p class="body-text clamp-5"><span class="dateline">New Delhi: </span>The honour cites "sustained, measurable impact across sectors not known for sharing a consultant."</p>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <div class="infobox" style="top:680px; left:480px; width:220px; height:220px;">
+      <div class="infobox-head">By The Numbers</div>
+      <div class="infobox-body">
+        <div class="stat-row"><span>Industries advised</span><span class="stat-num">12+</span></div>
+        <div class="stat-row"><span>Engagements delivered</span><span class="stat-num">40+</span></div>
+        <div class="stat-row"><span>Mentees / month</span><span class="stat-num">6</span></div>
+        <div class="stat-row"><span>Client revenue impact</span><span class="stat-num">₹100Cr+</span></div>
+      </div>
+    </div>
+
+    <!-- FOOTER FULL WIDTH -->
+    <article class="article" data-article="about-thenctimes" style="top:900px; left:20px; width:680px; height:60px; padding-top:10px;">
+      <span class="kicker" style="display:inline; margin-right:8px;">About This Paper</span>
+      <span class="body-text" style="font-style:italic;">Why a consultant chose a newspaper over a website — and what to expect on the pages that follow.</span>
+      <div class="read-hint" style="bottom:6px;">Read ▸</div>
+    </article>
+
+    <div class="page-folio"><span>The NC Times</span><span>Page 1</span></div>
+  </div>
+</div>
+
+<!-- ───────────────────────── PAGE 2 — CONSULTING ───────────────────────── -->
+<div id="content-p2" style="display:none">
+  <div class="page-canvas">
+    <div class="page-header">
+      <div class="ph-num">2</div>
+      <div class="ph-section">Consulting</div>
+      <div class="ph-meta">The NC Times &nbsp;|&nbsp; New Delhi &nbsp;|&nbsp; Sunday, 21 June 2026</div>
+    </div>
+
+    <div class="col-rule" style="left:360px; top:58px; height:882px;"></div>
+
+    <!-- LANE L (col 1-3) -->
+    <article class="article" data-article="singapore-to-delhi" style="top:58px; left:20px; width:335px; height:420px;">
+      <div class="kicker">Cross-Border Strategy</div>
+      <h2 class="h-lg">Singapore To Delhi: Lessons From A Cross-Border Engagement</h2>
+      <figure class="photo ph-c"><span class="p-label">Photo: Client Site Visit, Singapore</span></figure>
+      <div class="byline">Asia Desk</div>
+      <p class="body-text clamp-4"><span class="dateline">Singapore: </span>A regional retailer's expansion into India needed more than a translated playbook — it needed one rebuilt from the ground up.</p>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <article class="article" data-article="retail-to-resilience" style="top:478px; left:20px; width:335px; height:300px;">
+      <div class="kicker">Case Study</div>
+      <h2 class="h-lg">Retail To Resilience: Turning Around A Legacy Brand</h2>
+      <figure class="photo ph-d"><span class="p-label">Photo: Store Relaunch Day</span></figure>
+      <div class="byline">Business Desk</div>
+      <p class="body-text clamp-4"><span class="dateline">Mumbai: </span>A forty-year-old retail name was three quarters from insolvency. Fourteen months later, it posted its first profitable year since 2019.</p>
+      <div class="crossref">▶ Includes video</div>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <article class="article" data-article="speaking-2024" style="top:778px; left:20px; width:335px; height:162px;">
+      <div class="kicker">Speaking</div>
+      <h4 class="h-xs">Keynote At The National Business Summit</h4>
+      <div class="h-rule"></div>
+      <p class="body-text clamp-5"><span class="dateline">New Delhi: </span>Nikhil Chandra closed this year's Summit with a talk on what he calls "boring growth" — the unglamorous kind that compounds.</p>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <!-- LANE R (col 4-6) -->
+    <article class="article" data-article="twenty-mentees" style="top:58px; left:365px; width:335px; height:260px;">
+      <div class="kicker">Mentorship</div>
+      <h3 class="h-md">Twenty Mentees, One Framework: Building The Next Generation</h3>
+      <div class="h-rule"></div>
+      <div class="byline">Desk Report</div>
+      <p class="body-text clamp-6"><span class="dateline">New Delhi: </span>Every January, Nikhil Chandra opens twenty seats in a year-long mentorship cohort for early-career consultants — unpaid, oversubscribed, and by his own account, the part of the job he protects hardest.</p>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <div class="quote-box" style="top:318px; left:365px; width:335px; height:200px;">
+      <p>"Growth isn't a single sprint — it's a series of well-timed bets."</p>
+      <cite>— Nikhil Chandra</cite>
+    </div>
+
+    <article class="article" data-article="growth-diagnostic-method" style="top:518px; left:365px; width:335px; height:422px; border:1px solid var(--rule-light);">
+      <div class="kicker">Framework</div>
+      <h3 class="h-md" style="margin-top:8px;">The Growth Diagnostic: A Five-Step Method</h3>
+      <div class="h-rule"></div>
+      <div class="byline">Methodology</div>
+      <p class="body-text clamp-12"><span class="dateline">New Delhi: </span>Every engagement Nikhil Chandra takes on begins the same way: not with a strategy deck, but with a five-step diagnostic designed to surface the real constraint before anyone proposes a fix.</p>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <div class="page-folio"><span>The NC Times</span><span>Page 2</span></div>
+  </div>
+</div>
+
+<!-- ───────────────────────── PAGE 3 — PROJECTS & MILESTONES ───────────────────────── -->
+<div id="content-p3" style="display:none">
+  <div class="page-canvas">
+    <div class="page-header">
+      <div class="ph-num">3</div>
+      <div class="ph-section">Projects &amp; Milestones</div>
+      <div class="ph-meta">The NC Times &nbsp;|&nbsp; New Delhi &nbsp;|&nbsp; Sunday, 21 June 2026</div>
+    </div>
+
+    <div class="col-rule" style="left:360px; top:58px; height:882px;"></div>
+
+    <!-- LANE L (col 1-3) -->
+    <article class="article" data-article="manufacturing-turnaround" style="top:58px; left:20px; width:335px; height:420px;">
+      <div class="kicker">Flagship Engagement</div>
+      <h2 class="h-lg">The Manufacturing Turnaround That Redefined A Decade-Old Firm</h2>
+      <figure class="photo ph-e"><span class="p-label">Photo: Floor Walkthrough</span></figure>
+      <div class="byline">Business Desk</div>
+      <p class="body-text clamp-4"><span class="dateline">Pune: </span>A family-run manufacturer was losing share quietly, for years, before anyone agreed to call it a crisis.</p>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <div class="infobox" style="top:498px; left:20px; width:335px; height:230px;">
+      <div class="infobox-head">Revenue Impact, By Year</div>
+      <div class="infobox-body">
+        <div class="chart-bars">
+          <div class="chart-bar" style="height:30%"><span>1.0x</span><em>'22</em></div>
+          <div class="chart-bar" style="height:46%"><span>1.4x</span><em>'23</em></div>
+          <div class="chart-bar" style="height:64%"><span>1.9x</span><em>'24</em></div>
+          <div class="chart-bar" style="height:82%"><span>2.3x</span><em>'25</em></div>
+          <div class="chart-bar" style="height:100%"><span>2.8x</span><em>'26</em></div>
+        </div>
+      </div>
+    </div>
+
+    <article class="article" data-article="recognition-roundup" style="top:748px; left:20px; width:335px; height:192px;">
+      <div class="kicker">Round-Up</div>
+      <h4 class="h-xs">Recognition Round-Up: Five Mentions Worth Noting</h4>
+      <div class="h-rule"></div>
+      <p class="body-text clamp-6"><span class="dateline">New Delhi: </span>From a podcast feature to a quiet citation in an industry report — five mentions Nikhil Chandra didn't pitch for.</p>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <!-- LANE R (col 4-6) -->
+    <article class="article" data-article="panel-future-of-work" style="top:58px; left:365px; width:335px; height:200px;">
+      <div class="kicker">Panel</div>
+      <h3 class="h-sm">On The Panel: The Future Of Work, Reframed</h3>
+      <div class="h-rule"></div>
+      <p class="body-text clamp-6"><span class="dateline">New Delhi: </span>Nikhil Chandra joined three other panelists to argue that "future of work" conversations usually skip the only question that matters: future of work for whom?</p>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <article class="article" data-article="three-sector-partnerships" style="top:258px; left:365px; width:335px; height:300px;">
+      <div class="kicker">Partnerships</div>
+      <h3 class="h-md">Three New Sector Partnerships Announced This Quarter</h3>
+      <div class="h-rule"></div>
+      <div class="byline">Business Desk</div>
+      <p class="body-text clamp-8"><span class="dateline">New Delhi: </span>Healthcare, logistics and D2C retail — three sectors Nikhil Chandra had deliberately avoided until this quarter, when all three arrived within the same fortnight.</p>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <!-- FULL WIDTH TIMELINE -->
+    <article class="article" data-article="five-years-five-pivots" style="top:698px; left:365px; width:335px; height:242px;">
+      <div class="kicker">Timeline</div>
+      <h3 class="h-md">Five Years, Five Pivots: A Career Timeline</h3>
+      <div class="h-rule"></div>
+      <p class="body-text clamp-6"><span class="dateline">New Delhi: </span>A short account of the five decisions that, in hindsight, mattered more than they felt like at the time.</p>
+      <div class="crossref">▶ With photo gallery</div>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <div class="page-folio"><span>The NC Times</span><span>Page 3</span></div>
+  </div>
+</div>
+
+<!-- ───────────────────────── PAGE 4 — ABOUT & CONTACT ───────────────────────── -->
+<div id="content-p4" style="display:none">
+  <div class="page-canvas">
+    <div class="page-header">
+      <div class="ph-num">4</div>
+      <div class="ph-section">About &amp; Contact</div>
+      <div class="ph-meta">The NC Times &nbsp;|&nbsp; New Delhi &nbsp;|&nbsp; Sunday, 21 June 2026</div>
+    </div>
+
+    <div class="col-rule" style="left:360px; top:58px; height:740px;"></div>
+
+    <article class="article" data-article="get-in-touch" style="top:58px; left:20px; width:335px; height:330px;">
+      <div class="kicker">Reach Out</div>
+      <h2 class="h-lg">Get In Touch: How To Reach Nikhil Chandra</h2>
+      <div class="h-rule"></div>
+      <div class="byline">Reader Services</div>
+      <p class="body-text clamp-8"><span class="dateline">New Delhi: </span>TheNCTimes takes letters. New consulting enquiries, speaking invitations and the occasional correction are all welcome — details on where to send them, below.</p>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <article class="article" data-article="editors-note" style="top:408px; left:20px; width:335px; height:390px;">
+      <div class="kicker">Editor's Note</div>
+      <h2 class="h-md">A Note From The Editor's Desk</h2>
+      <div class="h-rule"></div>
+      <div class="byline">Nikhil Chandra, Editor</div>
+      <p class="body-text clamp-10"><span class="dateline">New Delhi: </span>A short, honest word on why this portfolio exists at all — and what it owes to every actual newspaper sitting, unread, on a desk somewhere this morning.</p>
+      <div class="read-hint">Read ▸</div>
+    </article>
+
+    <div class="classifieds" style="top:58px; left:365px; width:335px;">
+      <h4>Classifieds</h4>
+      <div class="classified-ad"><b>Available</b>New consulting engagements — Q3 2026 onward.</div>
+      <div class="classified-ad"><b>Email</b>hello@thenctimes.in</div>
+      <div class="classified-ad"><b>LinkedIn</b>/in/nikhilchandra</div>
+      <div class="classified-ad"><b>Location</b>New Delhi, India — works globally.</div>
+    </div>
+
+    <div class="colophon" style="top:660px; left:365px; width:335px;">
+      TheNCTimes is a personal portfolio published by Nikhil Chandra. Stories are accounts of real and representative work; some names and figures are illustrative. Typeset in Playfair Display, Source Serif&nbsp;4 and IBM Plex Mono. Built with care, not a content calendar. © 2026 The NC Times.
+    </div>
+
+    <div class="page-folio"><span>The NC Times</span><span>Page 4</span></div>
+  </div>
+</div>
+
+<!-- ───────────────────────── BACK COVER ───────────────────────── -->
+<div id="content-cover-back" style="display:none">
+  <div class="cover" onclick="restartBook()">
+    <div class="cv-vol">Thank You For Reading</div>
+    <div class="mono">NC</div>
+    <h2>THE&nbsp;NC&nbsp;TIMES</h2>
+    <p class="cv-tag">Printed Daily, In One Browser Tab</p>
+    <div class="cv-cta">↺ Back To The Front Page</div>
+    <div class="cv-foot">www.thenctimes.in</div>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════════
+     ═══   ARTICLE DETAIL TEMPLATES (full modal content)   ═══
+     One <template> per data-article id above. JS clones .content
+     into #modalBody / sidebar on click — see openModal().
+     ════════════════════════════════════════════════════════════════ -->
+
+<template id="tpl-launching-nctimes">
+  <div data-headline="TheNCTimes Launches Today: A Consultant's Life Told In Print"
+       data-deck="A new kind of portfolio — built like a broadsheet, not a brochure."
+       data-kicker="Founding Story" data-category="Career" data-date="21 June 2026"
+       data-byline="By Staff Reporter — New Delhi" data-readtime="4 min"
+       data-summary='["TheNCTimes is a personal portfolio styled as a physical broadsheet newspaper.","Every project, award and milestone is typeset as a dated newspaper article.","The site uses a genuine page-turn mechanic instead of scrolling.","Built to make a casual visitor want to keep reading, one page at a time."]'>
+    <p>Nikhil Chandra, the New Delhi-based growth consultant, today unveiled TheNCTimes — a personal portfolio that abandons the conventional scrolling website in favour of something closer to a printing press than a product page. Visitors do not scroll. They turn pages.</p>
+    <p>Every entry, from early career milestones to flagship client engagements, has been typeset as a dated, bylined dispatch, complete with kickers, decks and cross-references to other pages — the full apparatus of a real newsroom, repurposed for a portfolio of one.</p>
+    <div class="modal-pullquote">
+      <p>I wanted a portfolio that felt like it had been put to bed by an editor at midnight, not generated by a template.</p>
+      <cite>Nikhil Chandra, Founding Note</cite>
+    </div>
+    <figure class="modal-figure"><div class="photo ph-b"><span class="p-label">Photo: First Proof, June 2026</span></div><figcaption>The first typeset proof of TheNCTimes front page, reviewed the night before launch.</figcaption></figure>
+    <p>The format is deliberately unhurried. A reader who only wants the headline gets a headline; a reader who wants the whole story can open it, read the summary, and decide whether to go further — exactly as a newspaper has always worked, and exactly as most portfolios, with their wall of identical cards, do not.</p>
+  </div>
+</template>
+
+<template id="tpl-campus-to-boardroom">
+  <div data-headline="From Campus To Boardroom: The First Five Years"
+       data-deck="" data-kicker="Early Years" data-category="Career" data-date="14 June 2026"
+       data-byline="By Desk Report — New Delhi" data-readtime="3 min"
+       data-summary='["Started in operations before moving into client-facing strategy work.","Learned early that frameworks matter less than asking the right blunt question.","Took on his first independent mandate within three years.","Considers his first failed project the most useful one."]'>
+    <p>Long before TheNCTimes existed, Nikhil Chandra spent his first five working years moving between operations floors and client war-rooms, learning — slowly, then all at once — what actually moves a business forward.</p>
+    <p>The frameworks came later. What came first was a habit of asking the question nobody on the call wanted to answer, usually about ten minutes before the meeting was supposed to end.</p>
+    <p>By year three, he was running his own mandates. By year five, he had stopped calling himself junior anything.</p>
+  </div>
+</template>
+
+<template id="tpl-client-win-40cr">
+  <div data-headline="How A ₹40 Crore Mandate Became A Blueprint For Scaling Mid-Cap Firms"
+       data-deck="" data-kicker="Client Work" data-category="Projects" data-date="2 June 2026"
+       data-byline="By Business Desk — Gurgaon" data-readtime="5 min"
+       data-summary='["Eighteen-month engagement with a mid-cap manufacturer.","Revenue scaled meaningfully without a corresponding headcount blowout.","The engagement produced a repeatable diagnostic now used across clients.","Became the template for at least six subsequent mandates."]'>
+    <p>An eighteen-month mandate with a mid-cap manufacturer became the template Nikhil Chandra now reaches for first whenever a new client describes growth as the goal but cannot say, specifically, growth in what.</p>
+    <figure class="modal-figure"><div class="photo ph-a"><span class="p-label">Photo: Strategy Workshop, Gurgaon</span></div><figcaption>A working session with the client's leadership team during month four of the engagement.</figcaption></figure>
+    <p>The brief had arrived vague, as most do. What followed was four weeks of diagnostic work before a single recommendation was made — a sequencing Nikhil Chandra insists on regardless of how impatient a client's board might be.</p>
+    <p>The resulting plan scaled revenue without a corresponding blowout in headcount or overhead, and the diagnostic built for that engagement has since been reused, with modification, on more than a dozen others.</p>
+  </div>
+</template>
+
+<template id="tpl-business-excellence-award">
+  <div data-headline="National Business Excellence Award Goes To Nikhil Chandra"
+       data-deck="" data-kicker="Recognition" data-category="Recognition" data-date="9 May 2026"
+       data-byline="By Desk Report — New Delhi" data-readtime="2 min"
+       data-summary='["Award cited sustained, measurable impact across multiple sectors.","Nikhil Chandra was nominated by two former clients.","The ceremony was held in New Delhi in May 2026.","He used the acceptance remarks to credit his mentees, not himself."]'>
+    <p>The honour cites "sustained, measurable impact across sectors not known for sharing a consultant" — language the awarding committee apparently did not intend as a joke, though Nikhil Chandra read it as one.</p>
+    <p>He was nominated, somewhat to his surprise, by two former clients independently. His acceptance remarks ran under ninety seconds and mentioned his mentees more than they mentioned him.</p>
+  </div>
+</template>
+
+<template id="tpl-three-principles">
+  <div data-headline="Three Principles I Have Never Negotiated On"
+       data-deck="" data-kicker="Philosophy" data-category="Career" data-date="28 April 2026"
+       data-byline="Opinion — Nikhil Chandra" data-readtime="4 min"
+       data-summary='["Never recommend a fix before the constraint is proven, not assumed.","Never let a client pay for confidence that has not been earned by evidence.","Never take an engagement he would be embarrassed to explain to a mentee.","Holds these even when they cost him an engagement."]'>
+    <p>Across forty-odd engagements, Nikhil Chandra has held to three rules that, he says, have never once produced a bad outcome — even when they made the room uncomfortable.</p>
+    <div class="modal-pullquote"><p>If I can't explain the recommendation to a first-year mentee without flinching, I haven't earned the right to bill for it.</p><cite>Nikhil Chandra</cite></div>
+    <p>The first rule is sequencing: no fix before the constraint is proven. The second is honesty about uncertainty, even when a client would rather hear confidence. The third is simpler than it sounds — he will not take on work he would be embarrassed to describe to someone learning the job.</p>
+    <p>All three have cost him engagements. None, he says, has cost him a client twice.</p>
+  </div>
+</template>
+
+<template id="tpl-six-startups-one-month">
+  <div data-headline="When Six Startups Called In One Month"
+       data-deck="" data-kicker="Advisory At Scale" data-category="Projects" data-date="11 April 2026"
+       data-byline="By Business Desk — Gurgaon" data-readtime="4 min"
+       data-summary='["Six unrelated founders reached out within the same April week.","All were early-stage, asking variations of the same growth question.","Led Nikhil Chandra to formalise a lightweight advisory-at-scale offering.","Now runs as a standing monthly cohort rather than one-off calls."]'>
+    <p>A single April week brought six unrelated founders to Nikhil Chandra's inbox, each asking some version of the same question: how do we grow without breaking what already works?</p>
+    <p>Rather than take six identical one-off calls, he restructured the offering into a standing monthly cohort — same diagnostic, shared format, individual follow-through. Five of the six founders are still in it.</p>
+  </div>
+</template>
+
+<template id="tpl-about-thenctimes">
+  <div data-headline="About TheNCTimes: Why A Consultant Chose A Newspaper"
+       data-deck="The format, the reasoning, and what to expect on the pages that follow."
+       data-kicker="About This Paper" data-category="About" data-date="21 June 2026"
+       data-byline="By Nikhil Chandra, Editor" data-readtime="3 min"
+       data-summary='["TheNCTimes documents career, projects, and recognition as newspaper dispatches.","The format borrows real newsroom typesetting conventions on purpose.","New entries are added the way a newspaper adds editions — dated and filed.","See Page 4 for how to get in touch."]'>
+    <p>A portfolio is, structurally, an advertisement. A newspaper is, structurally, an argument that something happened and is worth your attention. Nikhil Chandra wanted the second thing more than the first.</p>
+    <p>So TheNCTimes borrows the conventions wholesale — kickers, decks, bylines, datelines, cross-references — not as decoration but as discipline. If an entry can't be written as a dispatch a stranger would want to finish reading, it doesn't get a slot.</p>
+  </div>
+</template>
+
+<template id="tpl-singapore-to-delhi">
+  <div data-headline="Singapore To Delhi: Lessons From A Cross-Border Engagement"
+       data-deck="" data-kicker="Cross-Border Strategy" data-category="Consulting" data-date="30 March 2026"
+       data-byline="By Asia Desk — Singapore" data-readtime="4 min"
+       data-summary='["A regional retailer expanded from Singapore into the Indian market.","The original playbook needed structural changes, not just translation.","Local supply chain and compliance differences reshaped the entry plan.","The engagement ran nine months end to end."]'>
+    <p>A regional retailer's expansion into India needed more than a translated playbook — it needed one rebuilt from the ground up, starting with assumptions about supply chains that simply did not transfer.</p>
+    <figure class="modal-figure"><div class="photo ph-c"><span class="p-label">Photo: Client Site Visit, Singapore</span></div><figcaption>Early scoping sessions at the client's Singapore headquarters, January 2026.</figcaption></figure>
+    <p>What looked, on paper, like a market-entry exercise turned into a nine-month rebuild of the operating model itself. Nikhil Chandra credits most of what worked to a willingness, on both sides, to throw out the original deck entirely.</p>
+  </div>
+</template>
+
+<template id="tpl-twenty-mentees">
+  <div data-headline="Twenty Mentees, One Framework: Building The Next Generation"
+       data-deck="" data-kicker="Mentorship" data-category="Consulting" data-date="18 March 2026"
+       data-byline="By Desk Report — New Delhi" data-readtime="3 min"
+       data-summary='["Twenty seats open each January in a year-long mentorship cohort.","Unpaid, oversubscribed, and run alongside a full client workload.","Built around the same five-step diagnostic used with clients.","Several former mentees now work with Nikhil Chandra directly."]'>
+    <p>Every January, Nikhil Chandra opens twenty seats in a year-long mentorship cohort for early-career consultants — unpaid, oversubscribed, and by his own account, the part of the job he protects hardest against everything else on his calendar.</p>
+    <p>The curriculum is the same growth diagnostic he uses with paying clients, taught in reverse: mentees practice on each other's hypothetical businesses before ever sitting across from a real one.</p>
+  </div>
+</template>
+
+<template id="tpl-growth-diagnostic-method">
+  <div data-headline="The Growth Diagnostic: A Five-Step Method"
+       data-deck="" data-kicker="Framework" data-category="Consulting" data-date="6 March 2026"
+       data-byline="Methodology — New Delhi" data-readtime="4 min"
+       data-summary='["Step one is always constraint identification, never solutioning.","Each step has a hard go/no-go gate before the next begins.","Designed to be explainable to a client in under five minutes.","Used on every engagement regardless of sector or size."]'>
+    <p>Every engagement Nikhil Chandra takes on begins the same way: not with a strategy deck, but with a five-step diagnostic designed to surface the real constraint before anyone proposes a fix.</p>
+    <p>The steps are unglamorous on purpose — data audit, constraint mapping, stakeholder triangulation, a single prioritised hypothesis, and only then a plan. Skipping a step, in his experience, is the single most common cause of an expensive recommendation that nobody implements.</p>
+  </div>
+</template>
+
+<template id="tpl-retail-to-resilience">
+  <div data-headline="Retail To Resilience: Turning Around A Legacy Brand"
+       data-deck="" data-kicker="Case Study" data-category="Consulting" data-date="19 February 2026"
+       data-byline="By Business Desk — Mumbai" data-readtime="5 min"
+       data-summary='["A forty-year-old retail brand was three quarters from insolvency.","Turnaround plan focused on store economics before brand repositioning.","Posted its first profitable year since 2019 within fourteen months.","A short video recap was filmed for internal training use."]'>
+    <p>A forty-year-old retail name was three quarters from insolvency when Nikhil Chandra was brought in — not to rebrand it, as the board initially wanted, but to first establish whether any of its stores were actually profitable on their own terms.</p>
+    <div class="modal-video">
+      <div class="video-embed">
+        <div class="video-play"><svg width="20" height="20" viewBox="0 0 24 24" fill="#1A1A1A"><path d="M8 5v14l11-7z"/></svg></div>
+        <span class="v-label">▶ Client Recap Reel — 2:14</span>
+      </div>
+      <div class="video-caption">A short internal recap, filmed for training use, summarising the fourteen-month turnaround.</div>
+    </div>
+    <p>Fourteen months later, the brand posted its first profitable year since 2019 — not from a relaunch, but from closing the stores that were quietly subsidised by the ones that worked, and rebuilding around what remained.</p>
+  </div>
+</template>
+
+<template id="tpl-speaking-2024">
+  <div data-headline="Keynote At The National Business Summit"
+       data-deck="" data-kicker="Speaking" data-category="Consulting" data-date="2 February 2026"
+       data-byline="By Desk Report — New Delhi" data-readtime="2 min"
+       data-summary='["Closing keynote at this year\u2019s National Business Summit.","Talk centred on \u201cboring growth\u201d \u2014 the unglamorous, compounding kind.","Drew on three anonymised case studies from the past two years.","Recording was not made public at the client\u2019s request."]'>
+    <p>Nikhil Chandra closed this year's Summit with a talk on what he calls "boring growth" — the unglamorous kind that compounds quietly instead of arriving as a headline.</p>
+    <p>The talk leaned on three anonymised case studies, deliberately stripped of the dramatic turnaround narrative most stage talks reach for.</p>
+  </div>
+</template>
+
+<template id="tpl-manufacturing-turnaround">
+  <div data-headline="The Manufacturing Turnaround That Redefined A Decade-Old Firm"
+       data-deck="" data-kicker="Flagship Engagement" data-category="Projects" data-date="22 January 2026"
+       data-byline="By Business Desk — Pune" data-readtime="5 min"
+       data-summary='["A family-run manufacturer was losing market share for years before acting.","Engagement began with a full floor-level operations audit.","New scheduling and supplier model cut delivery delays sharply.","Now cited internally as the flagship case for the firm\u2019s method."]'>
+    <p>A family-run manufacturer was losing share quietly, for years, before anyone agreed to call it a crisis. By the time Nikhil Chandra was called in, the conversation had shifted from "how do we grow" to "how do we stop losing."</p>
+    <figure class="modal-figure"><div class="photo ph-e"><span class="p-label">Photo: Floor Walkthrough, Pune</span></div><figcaption>A floor-level audit during week two of the engagement, before any recommendations were drafted.</figcaption></figure>
+    <p>The fix turned out to be unglamorous: a rebuilt scheduling system and a renegotiated supplier base, neither of which made for an exciting board presentation, both of which moved the actual numbers.</p>
+  </div>
+</template>
+
+<template id="tpl-panel-future-of-work">
+  <div data-headline="On The Panel: The Future Of Work, Reframed"
+       data-deck="" data-kicker="Panel" data-category="Projects" data-date="14 January 2026"
+       data-byline="By Desk Report — New Delhi" data-readtime="2 min"
+       data-summary='["Joined a four-person panel on the future of work.","Argued most such discussions skip the question of \u201cfor whom.\u201d","Focused remarks on mid-cap firms rather than large enterprises.","Panel was moderated by an industry trade publication."]'>
+    <p>Nikhil Chandra joined three other panelists to argue that "future of work" conversations usually skip the only question that matters: future of work for whom?</p>
+    <p>His remarks focused deliberately on mid-cap firms, a segment he felt was missing entirely from the panel's premise.</p>
+  </div>
+</template>
+
+<template id="tpl-three-sector-partnerships">
+  <div data-headline="Three New Sector Partnerships Announced This Quarter"
+       data-deck="" data-kicker="Partnerships" data-category="Projects" data-date="5 January 2026"
+       data-byline="By Business Desk — New Delhi" data-readtime="3 min"
+       data-summary='["Healthcare, logistics and D2C retail partnerships began within one fortnight.","All three sectors had previously been deliberately avoided.","Each partnership began with the same five-step diagnostic.","Early engagements are scoped for Q3 2026."]'>
+    <p>Healthcare, logistics and D2C retail — three sectors Nikhil Chandra had deliberately avoided until this quarter, when all three arrived within the same fortnight.</p>
+    <p>Each new partnership begins, as ever, with the diagnostic before the deck. Early-stage scoping for all three is underway for Q3 2026.</p>
+  </div>
+</template>
+
+<template id="tpl-five-years-five-pivots">
+  <div data-headline="Five Years, Five Pivots: A Career Timeline"
+       data-deck="" data-kicker="Timeline" data-category="Projects" data-date="1 January 2026"
+       data-byline="By Desk Report — New Delhi" data-readtime="4 min"
+       data-summary='["2022: First independent mandate, taken on without a safety net.","2023: Shifted focus from operations to growth strategy work.","2024: Began the annual twenty-seat mentorship cohort.","2025\u201326: Crossed forty completed engagements and launched TheNCTimes."]'>
+    <p>A short account of the five decisions that, in hindsight, mattered more than they felt like at the time.</p>
+    <div class="modal-gallery">
+      <figure><div class="photo ph-a"></div><figcaption>2022 — First mandate</figcaption></figure>
+      <figure><div class="photo ph-b"></div><figcaption>2023 — Strategy pivot</figcaption></figure>
+      <figure><div class="photo ph-c"></div><figcaption>2024 — First cohort</figcaption></figure>
+    </div>
+    <p>None of the five looked like a milestone while it was happening. Most looked like minor scheduling decisions that, a year later, turned out to have quietly redirected everything after them.</p>
+  </div>
+</template>
+
+<template id="tpl-recognition-roundup">
+  <div data-headline="Recognition Round-Up: Five Mentions Worth Noting"
+       data-deck="" data-kicker="Round-Up" data-category="Recognition" data-date="20 December 2025"
+       data-byline="By Desk Report — New Delhi" data-readtime="2 min"
+       data-summary='["Featured on an industry podcast discussing mid-cap growth strategy.","Cited, unprompted, in a sector report on manufacturing resilience.","Quoted in a regional business publication on mentorship.","None of the five mentions were the result of outreach."]'>
+    <p>From a podcast feature to a quiet citation in an industry report — five mentions Nikhil Chandra didn't pitch for, and only found out about after the fact.</p>
+  </div>
+</template>
+
+<template id="tpl-get-in-touch">
+  <div data-headline="Get In Touch: How To Reach Nikhil Chandra"
+       data-deck="" data-kicker="Reach Out" data-category="About" data-date="21 June 2026"
+       data-byline="Reader Services — New Delhi" data-readtime="2 min"
+       data-summary='["New consulting enquiries are reviewed within five business days.","Speaking invitations should include audience size and format.","Mentorship cohort applications open each January.","See the classifieds, right, for direct contact details."]'>
+    <p>TheNCTimes takes letters. New consulting enquiries, speaking invitations and the occasional correction are all welcome — the fastest route is email, listed in the classifieds column on Page 4.</p>
+    <p>Mentorship cohort applications are handled separately and open each January; speaking invitations should include expected audience size and format up front.</p>
+  </div>
+</template>
+
+<template id="tpl-editors-note">
+  <div data-headline="A Note From The Editor's Desk"
+       data-deck="" data-kicker="Editor's Note" data-category="About" data-date="21 June 2026"
+       data-byline="By Nikhil Chandra, Editor" data-readtime="3 min"
+       data-summary='["This portfolio is intentionally slower to read than a typical website.","The format is a deliberate bet that attention is worth asking for properly.","New stories are added the way a newspaper adds editions, not posts.","Feedback on the format itself is genuinely welcome."]'>
+    <p>A short, honest word on why this portfolio exists at all — and what it owes to every actual newspaper sitting, unread, on a desk somewhere this morning.</p>
+    <p>Most portfolios are built to be skimmed in eleven seconds. This one is built on the bet that a reader who is asked, politely, to turn a page will sometimes turn it — and that the work documented here deserves at least that much patience.</p>
+  </div>
+</template>
+
+
+<!-- ════════════════════════════════════════════════════════════════
+     ═══   SCRIPT — page assembly, flip mechanics, modal   ═══
+     ════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+
+  var PAGE_W = 720, PAGE_H = 980, SPINE_W = 7;
+
+  // Desktop spreads: [leftPageId, rightPageId]
+  var spreads = [
+    ['cover-front', 'p1'],
+    ['p2', 'p3'],
+    ['p4', 'cover-back']
+  ];
+  var spreadLabels = ['Front Page', 'Pages 2–3 · Consulting & Projects', 'Page 4 · About & Close'];
+
+  // Mobile: every physical page shown one at a time
+  var mobilePages = ['cover-front', 'p1', 'p2', 'p3', 'p4', 'cover-back'];
+  var mobileLabels = ['Cover', 'Page 1', 'Page 2', 'Page 3', 'Page 4', 'Back Cover'];
+
+  var cur = 0;        // current desktop spread index
+  var curMobile = 0;  // current mobile page index
+
+  var book = document.getElementById('book');
+  var leftSlot = document.getElementById('leftSlot');
+  var rightSlot = document.getElementById('rightSlot');
+  var leaf = document.getElementById('leaf');
+  var leafFront = document.getElementById('leafFront');
+  var leafBack = document.getElementById('leafBack');
+
+  var mobilePageWrap = document.getElementById('mobilePageWrap');
+  var mobileSlot = document.getElementById('mobileSlot');
+
+  var stage = document.getElementById('stage');
+  var mobileStage = document.getElementById('mobileStage');
+
+  var prevBtn = document.getElementById('prevBtn');
+  var nextBtn = document.getElementById('nextBtn');
+  var dotsWrap = document.getElementById('dots');
+  var indicatorLabel = document.getElementById('indicatorLabel');
+
+  function isMobile(){ return window.innerWidth < 881; }
+
+  function getPageHTML(id){
+    var el = document.getElementById('content-' + id);
+    return el ? el.innerHTML : '';
+  }
+
+  // ───────────────────────── SCALE ─────────────────────────
+  // Pattern: transform-origin top-left + explicit centering offset.
+  //
+  // Why not transform-origin center + flexbox?
+  // The element's LAYOUT size stays at its original (unscaled) px dimensions
+  // even after a CSS transform. On narrow viewports the layout box is wider
+  // than the container, so flexbox can't center it and overflow clips it.
+  //
+  // With top-left origin we compute the centering ourselves:
+  //   left = (viewportW − scaledW) / 2
+  //   top  = (viewportH − scaledH) / 2
+  // and set those as absolute offsets. The element's layout box is still the
+  // original size, but overflow:hidden on the stage clips it cleanly while
+  // the visual content is centered perfectly.
+  var indicator = document.getElementById('pageIndicator');
+  function applyScale(){
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    if (isMobile()){
+      var s = Math.min(vw / PAGE_W, vh / PAGE_H);
+      var l = (vw - PAGE_W * s) / 2;
+      var t = (vh - PAGE_H * s) / 2;
+      mobilePageWrap.style.transform = 'scale(' + s + ')';
+      mobilePageWrap.style.left = l + 'px';
+      mobilePageWrap.style.top  = t + 'px';
+      // indicator: sits just below the scaled spread bottom edge
+      var spreadBottom = t + PAGE_H * s;
+      var gap = Math.min(14, (vh - spreadBottom) / 2);
+      indicator.style.bottom = Math.max(6, vh - spreadBottom - gap) + 'px';
+      // arrows: vertically centered on the spread
+      var arrowTop = t + (PAGE_H * s) / 2;
+      prevBtn.style.top = arrowTop + 'px';
+      nextBtn.style.top = arrowTop + 'px';
+    } else {
+      var totalW = PAGE_W * 2 + SPINE_W;
+      var s2 = Math.min(vw / totalW, vh / PAGE_H);
+      var l2 = (vw - totalW * s2) / 2;
+      var t2 = (vh - PAGE_H  * s2) / 2;
+      book.style.transform = 'scale(' + s2 + ')';
+      book.style.left = l2 + 'px';
+      book.style.top  = t2 + 'px';
+      // indicator: sits just below the scaled spread bottom edge
+      var spreadBottom2 = t2 + PAGE_H * s2;
+      var gap2 = Math.min(14, (vh - spreadBottom2) / 2);
+      indicator.style.bottom = Math.max(6, vh - spreadBottom2 - gap2) + 'px';
+      // arrows: flush to spread sides, vertically centered on spread
+      var arrowTop2 = t2 + (PAGE_H * s2) / 2;
+      var leftEdge = Math.max(8, l2 - 54);
+      var rightEdge = Math.max(8, vw - l2 - totalW * s2 - 54);
+      prevBtn.style.top = arrowTop2 + 'px';
+      nextBtn.style.top = arrowTop2 + 'px';
+      prevBtn.style.left  = leftEdge + 'px';
+      nextBtn.style.right = rightEdge + 'px';
+    }
+  }
+
+  // ───────────────────────── DESKTOP BUILD / FLIP ─────────────────────────
+  function buildSpread(idx){
+    leftSlot.innerHTML = getPageHTML(spreads[idx][0]);
+    rightSlot.innerHTML = getPageHTML(spreads[idx][1]);
+    leaf.style.transition = 'none';
+    leaf.style.transform = 'rotateY(0deg)';
+    leaf.style.display = 'none';
+    leafFront.innerHTML = '';
+    leafBack.innerHTML = '';
+  }
+
+  function goNext(){
+    if (cur >= spreads.length - 1) return;
+    var next = cur + 1;
+    var curRightId = spreads[cur][1];
+    var nextLeftId = spreads[next][0];
+    var nextRightId = spreads[next][1];
+
+    rightSlot.innerHTML = getPageHTML(nextRightId); // hidden under leaf for now
+    leafFront.innerHTML = getPageHTML(curRightId);
+    leafBack.innerHTML = getPageHTML(nextLeftId);
+
+    leaf.style.left = (PAGE_W + SPINE_W) + 'px';
+    leaf.style.transformOrigin = 'left center';
+    leaf.style.display = 'block';
+    leaf.style.transition = 'none';
+    leaf.style.transform = 'rotateY(0deg)';
+    void leaf.offsetWidth;
+    leaf.style.transition = 'transform 1.05s cubic-bezier(.45,.05,.4,1)';
+    leaf.style.transform = 'rotateY(-180deg)';
+
+    leaf.addEventListener('transitionend', function handler(){
+      leaf.removeEventListener('transitionend', handler);
+      leftSlot.innerHTML = getPageHTML(nextLeftId);
+      leaf.style.transition = 'none';
+      leaf.style.display = 'none';
+      cur = next;
+      updateUI();
+    }, { once: true });
+  }
+
+  function goPrev(){
+    if (cur <= 0) return;
+    var prev = cur - 1;
+    var curLeftId = spreads[cur][0];
+    var prevLeftId = spreads[prev][0];
+    var prevRightId = spreads[prev][1];
+
+    leftSlot.innerHTML = getPageHTML(prevLeftId); // hidden under leaf for now
+    leafFront.innerHTML = getPageHTML(curLeftId);
+    leafBack.innerHTML = getPageHTML(prevRightId);
+
+    leaf.style.left = '0px';
+    leaf.style.transformOrigin = 'right center';
+    leaf.style.display = 'block';
+    leaf.style.transition = 'none';
+    leaf.style.transform = 'rotateY(0deg)';
+    void leaf.offsetWidth;
+    leaf.style.transition = 'transform 1.05s cubic-bezier(.45,.05,.4,1)';
+    leaf.style.transform = 'rotateY(180deg)';
+
+    leaf.addEventListener('transitionend', function handler(){
+      leaf.removeEventListener('transitionend', handler);
+      rightSlot.innerHTML = getPageHTML(prevRightId);
+      leaf.style.transition = 'none';
+      leaf.style.display = 'none';
+      cur = prev;
+      updateUI();
+    }, { once: true });
+  }
+
+  function jumpToSpread(idx){
+    if (isMobile()){
+      curMobile = Math.min(mobilePages.length - 1, idx * 2); // rough mapping
+      buildMobile(curMobile);
+    } else {
+      cur = Math.max(0, Math.min(spreads.length - 1, idx));
+      buildSpread(cur);
+    }
+    updateUI();
+  }
+  window.jumpToSpread = jumpToSpread;
+
+  function restartBook(){
+    if (isMobile()){ curMobile = 0; buildMobile(0); }
+    else { cur = 0; buildSpread(0); }
+    updateUI();
+  }
+  window.restartBook = restartBook;
+
+  function onCoverClick(){
+    if (isMobile()) mobileNext(); else goNext();
+  }
+  window.onCoverClick = onCoverClick;
+
+  // ───────────────────────── MOBILE BUILD / SLIDE ─────────────────────────
+  function buildMobile(idx){
+    mobileSlot.innerHTML = getPageHTML(mobilePages[idx]);
+  }
+
+  function mobileNext(){
+    if (curMobile >= mobilePages.length - 1) return;
+    curMobile++;
+    slideMobile('left');
+  }
+  function mobilePrev(){
+    if (curMobile <= 0) return;
+    curMobile--;
+    slideMobile('right');
+  }
+  function slideMobile(dir){
+    mobileSlot.style.transition = 'transform .28s ease, opacity .28s ease';
+    mobileSlot.style.transform = dir === 'left' ? 'translateX(-26px)' : 'translateX(26px)';
+    mobileSlot.style.opacity = '0';
+    setTimeout(function(){
+      buildMobile(curMobile);
+      mobileSlot.style.transition = 'none';
+      mobileSlot.style.transform = dir === 'left' ? 'translateX(26px)' : 'translateX(-26px)';
+      requestAnimationFrame(function(){
+        mobileSlot.style.transition = 'transform .28s ease, opacity .28s ease';
+        mobileSlot.style.transform = 'translateX(0)';
+        mobileSlot.style.opacity = '1';
+      });
+      updateUI();
+    }, 280);
+  }
+
+  // touch swipe
+  var touchStartX = null;
+  mobilePageWrap.addEventListener('touchstart', function(e){ touchStartX = e.touches[0].clientX; }, { passive: true });
+  mobilePageWrap.addEventListener('touchend', function(e){
+    if (touchStartX === null) return;
+    var dx = e.changedTouches[0].clientX - touchStartX;
+    if (dx < -40) mobileNext();
+    else if (dx > 40) mobilePrev();
+    touchStartX = null;
+  }, { passive: true });
+
+  // ───────────────────────── UNIFIED NAV ─────────────────────────
+  function onNext(){ isMobile() ? mobileNext() : goNext(); }
+  function onPrev(){ isMobile() ? mobilePrev() : goPrev(); }
+  prevBtn.addEventListener('click', onPrev);
+  nextBtn.addEventListener('click', onNext);
+
+  function updateUI(){
+    var mobile = isMobile();
+    var idx = mobile ? curMobile : cur;
+    var total = mobile ? mobilePages.length : spreads.length;
+    var label = mobile ? mobileLabels[curMobile] : spreadLabels[cur];
+
+    indicatorLabel.textContent = label;
+    prevBtn.classList.toggle('disabled', idx <= 0);
+    nextBtn.classList.toggle('disabled', idx >= total - 1);
+
+    // dots always reflect desktop spreads (3) for simplicity, mapped on mobile too
+    dotsWrap.innerHTML = '';
+    var dotCount = spreads.length;
+    var activeDot = mobile ? Math.min(dotCount - 1, Math.round(curMobile / 2)) : cur;
+    for (var i = 0; i < dotCount; i++){
+      var d = document.createElement('div');
+      d.className = 'dot' + (i === activeDot ? ' active' : '');
+      (function(i){ d.addEventListener('click', function(){ jumpToSpread(i); }); })(i);
+      dotsWrap.appendChild(d);
+    }
+  }
+
+  // ───────────────────────── MODAL ─────────────────────────
+  var modalOverlay = document.getElementById('modalOverlay');
+  var modalBody = document.getElementById('modalBody');
+  var modalHeadline = document.getElementById('modalHeadline');
+  var modalDeck = document.getElementById('modalDeck');
+  var modalByline = document.getElementById('modalByline');
+  var modalKicker = document.getElementById('modalKicker');
+  var modalDate = document.getElementById('modalDate');
+  var modalSummary = document.getElementById('modalSummary');
+  var modalReadTime = document.getElementById('modalReadTime');
+  var modalCategory = document.getElementById('modalCategory');
+
+  function openModal(articleId){
+    var tpl = document.getElementById('tpl-' + articleId);
+    if (!tpl) return;
+    var dataHost = tpl.content.querySelector('div');
+
+    modalHeadline.textContent = dataHost.getAttribute('data-headline') || '';
+    var deck = dataHost.getAttribute('data-deck') || '';
+    modalDeck.style.display = deck ? 'block' : 'none';
+    modalDeck.textContent = deck;
+    modalKicker.textContent = dataHost.getAttribute('data-kicker') || '';
+    modalDate.textContent = dataHost.getAttribute('data-date') || '';
+    modalByline.textContent = dataHost.getAttribute('data-byline') || '';
+    modalReadTime.textContent = dataHost.getAttribute('data-readtime') || '3 min';
+    modalCategory.textContent = dataHost.getAttribute('data-category') || '';
+
+    modalBody.innerHTML = '';
+    var clone = dataHost.cloneNode(true);
+    clone.removeAttribute('data-headline');
+    while (clone.firstChild) modalBody.appendChild(clone.firstChild);
+
+    modalSummary.innerHTML = '';
+    try {
+      var bullets = JSON.parse(dataHost.getAttribute('data-summary') || '[]');
+      bullets.forEach(function(b){
+        var li = document.createElement('li');
+        li.textContent = b;
+        modalSummary.appendChild(li);
+      });
+    } catch(e){ /* noop */ }
+
+    modalBody.scrollTop = 0;
+    modalOverlay.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    history.pushState({ article: articleId }, '', '#/article/' + articleId);
+  }
+
+  function closeModal(){
+    if (!modalOverlay.classList.contains('open')) return;
+    modalOverlay.classList.remove('open');
+    document.body.style.overflow = '';
+    if (location.hash.indexOf('/article/') !== -1){
+      history.pushState({}, '', location.pathname + location.search);
+    }
+  }
+
+  document.addEventListener('click', function(e){
+    var art = e.target.closest && e.target.closest('.article[data-article]');
+    if (art){ openModal(art.getAttribute('data-article')); return; }
+    if (e.target.closest && e.target.closest('[data-close-modal]')){ closeModal(); return; }
+    if (e.target === modalOverlay){ closeModal(); }
+  });
+
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape'){ closeModal(); return; }
+    if (modalOverlay.classList.contains('open')) return;
+    if (e.key === 'ArrowRight') onNext();
+    if (e.key === 'ArrowLeft') onPrev();
+  });
+
+  window.addEventListener('popstate', function(){
+    if (location.hash.indexOf('/article/') === -1) closeModal();
+  });
+
+  // ───────────────────────── INIT ─────────────────────────
+  function applyMode(){
+    var mobile = isMobile();
+    stage.style.display = mobile ? 'none' : 'flex';
+    mobileStage.style.display = mobile ? 'flex' : 'none';
+    applyScale();
+  }
+
+  window.addEventListener('resize', applyMode);
+
+  document.addEventListener('DOMContentLoaded', function(){
+    buildSpread(0);
+    buildMobile(0);
+    applyMode();
+    updateUI();
+  });
+
+})();
+</script>
+
+</body>
+</html>
